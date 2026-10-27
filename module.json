@@ -2,13 +2,13 @@
     "name": "LibrarySystem",
     "alias": "library-system",
     "composer_package": "koakademy/library-system",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Library catalogue, borrowing, research papers, and rights-cleared digital editions.",
     "author": "KoAkademy contributors",
     "license": "AGPL-3.0-or-later",
     "requires": {
-        "core": ">=1.20.0",
-        "php": ">=8.5",
+        "core": ">=1.29.0",
+        "php": ">=8.5.12 <8.6",
         "modules": {}
     },
     "compatibility": {
