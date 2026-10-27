@@ -1,6 +1,16 @@
 {
     "name": "koakademy/library-system",
     "description": "Library catalogue, borrowing, research papers, and rights-cleared digital editions.",
+    "homepage": "https://github.com/yukazakiri/koakademy-module-library-system",
+    "keywords": [
+        "koakademy",
+        "school-management",
+        "library-system"
+    ],
+    "support": {
+        "issues": "https://github.com/yukazakiri/koakademy-module-library-system/issues",
+        "source": "https://github.com/yukazakiri/koakademy-module-library-system"
+    },
     "type": "library",
     "license": "AGPL-3.0-or-later",
     "authors": [
