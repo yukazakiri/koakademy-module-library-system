@@ -16,10 +16,10 @@ a running container; Composer and the application image do that.
 
 ## Installation
 
-After `v1.1.0` is tagged and the package is published on Packagist, run the
+After `v1.2.0` is tagged and the package is published on Packagist, run the
 following commands from the host application's repository root:
 
-    composer require koakademy/library-system:^1.1
+    composer require koakademy/library-system:^1.2
     php artisan migrate --force
     php artisan optimize:clear
 
@@ -61,19 +61,54 @@ controls student/faculty access.
 
 ## Using the admin panel
 
-Open /administrators/library for the custom administrator workspace. It
-contains the catalogue overview, books, authors, book categories, borrow
-records, research papers, and digital-edition controls. It appears under
-**Library** in the administrator navigation.
+Open `/administrators/library` for the custom administrator workspace. It
+contains the catalogue overview, hosted eBooks metrics, books, authors, book
+categories, borrow records, research papers, and digital-edition controls. It
+appears under **Library** in the administrator navigation.
 
-The Filament admin panel at /admin also exposes the **Library** resources for
-books, authors, book categories, and borrow records. The portal catalogue is
-available at /library when Digital Library is enabled.
+The Filament admin panel at `/admin` also exposes the **Library** resources for
+books, authors, book categories, and borrow records (including hosted eBook
+status badges and a **Published eBooks** filter). The public library catalogue
+is available at `/library` when Digital Library is enabled.
 
 Add catalogue records first, then create borrow records or attach a
-rights-cleared digital edition to a book. Do not upload content unless the
-institution has the rights to store and distribute it. Permission and
-library-enabled checks apply to the relevant workflows.
+rights-cleared PDF edition to a book (**Books → Manage eBook PDF**). Do not
+upload content unless the institution has the rights to store and distribute
+it. Permission and library-enabled checks apply to the relevant workflows.
+
+## Hosted eBooks & Open Browser Reading
+
+This module supports hosting private PDF eBooks so **anyone can browse and read
+in the browser without signing in**, while **downloading the PDF file requires
+an authenticated account** (and explicit per-book download permission):
+
+- **Public access (no account required)**:
+  - `GET /library` — Open Digital Library catalog with search, category, and
+    format filters (`All Titles`, `Read Online`, `In Library`).
+  - `GET /library/books/{book}` — Book detail page with instant **Read Online**
+    action and an account prompt for PDF downloads.
+  - `GET /library/books/{book}/read` — Distraction-free, responsive `pdf.js`
+    reader (Single Page with swipe/keyboard navigation, Continuous Scroll,
+    Paper / Sepia / Dark reading surfaces, page thumbnails, full-text search,
+    and local browser bookmarks/progress for guests).
+  - `GET /library/books/{book}/content` — Streams the privately stored PDF
+    inline (`Content-Disposition: inline`, `Cache-Control: private, no-store`,
+    `X-Robots-Tag: noindex, nofollow`) with HTTP `Range` (`206 Partial Content`)
+    support for fast page-by-page loading.
+- **Account-gated actions (`auth` middleware)**:
+  - `GET /library/books/{book}/download` — Streams the PDF as an attachment
+    only for signed-in users when `downloads_allowed` is enabled on the
+    published digital edition.
+  - `GET /library/books/{book}/authenticate` — Preserves post-login intent and
+    returns users directly to the book ready to download.
+  - Saved reading progress, shelf state, and bookmarks sync to the user's
+    account via `/library/books/{book}/state` and `/library/books/{book}/bookmarks`.
+- **Private storage**:
+  - Uploaded PDFs are stored on the private `library` disk (local or S3/R2
+    compatible; S3/R2 editions use short-lived signed URLs capped at
+    `rights_expires_at`), never exposed inside `public/storage`.
+  - Newly uploaded or replaced PDFs always default to `draft` (staff-only)
+    until explicitly reviewed and published with a documented rights basis.
 
 ## Upgrading
 
