@@ -1,4 +1,3 @@
-import PortalLayout from "@/components/portal-layout";
 import { Badge } from "@/components/reui/badge";
 import { Frame, FramePanel } from "@/components/reui/frame";
 import { IconTile } from "@/components/reui/icon-tile";
@@ -13,21 +12,26 @@ import {
     BookOpen,
     Building2,
     Calendar,
+    CheckCircle2,
     ChevronRight,
     Download,
     FileText,
+    Globe2,
     Heart,
     LibraryBig,
+    Lock,
     Mail,
     MapPin,
     Scale,
     ShieldCheck,
-    Sparkles,
     UserRound,
+    X,
 } from "lucide-react";
 import React, { useState } from "react";
+import { AccountGateDialog, type AccountGateReason } from "./components/account-gate-dialog";
 import { BookCard, type LibraryBookCardData } from "./components/book-card";
 import { BookCover } from "./components/book-cover";
+import { LibraryShell } from "./components/library-shell";
 
 interface BookDetail {
     id: number;
@@ -47,14 +51,25 @@ interface BookDetail {
     cover_image_url: string | null;
     available_online: boolean;
     downloads_allowed: boolean;
+    file_size_bytes: number | null;
     rights_basis: string | null;
     rights_holder: string | null;
     license_url: string | null;
     rights_expires_at: string | null;
 }
 
+interface AccessProps {
+    is_authenticated: boolean;
+    can_download: boolean;
+    download_requires_auth: boolean;
+    authenticate_url: string;
+    login_url: string;
+    signup_url: string;
+    ready_action: "download" | null;
+}
+
 interface Props {
-    auth: { user: User };
+    auth?: { user?: User | null };
     book: BookDetail;
     state: {
         is_favorite: boolean;
@@ -64,6 +79,7 @@ interface Props {
     };
     related: LibraryBookCardData[];
     takedown_email: string | null;
+    access?: AccessProps;
 }
 
 const RIGHTS_LABELS: Record<string, string> = {
@@ -74,13 +90,41 @@ const RIGHTS_LABELS: Record<string, string> = {
     public_domain: "Public domain",
 };
 
-export default function DigitalLibraryShow({ auth, book, state, related, takedown_email }: Props) {
+function formatFileSize(bytes?: number | null): string | null {
+    if (!bytes || bytes <= 0) return null;
+    if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export default function DigitalLibraryShow({ auth, book, state, related, takedown_email, access }: Props) {
+    const user = auth?.user ?? null;
+    const isAuthenticated = Boolean(user);
+    const canDownload = access?.can_download ?? (isAuthenticated && book.available_online && book.downloads_allowed);
+    const downloadRequiresAuth = access?.download_requires_auth ?? (!isAuthenticated && book.available_online && book.downloads_allowed);
+    const loginUrl = access?.login_url ?? "/login";
+    const signupUrl = access?.signup_url ?? "/signup";
+    const authenticateUrl = access?.authenticate_url ?? loginUrl;
+
     const [isFavorite, setIsFavorite] = useState(state.is_favorite);
     const [favoritePending, setFavoritePending] = useState(false);
+    const [gateOpen, setGateOpen] = useState(false);
+    const [gateReason, setGateReason] = useState<AccountGateReason>("download");
+    const [dismissedReadyBanner, setDismissedReadyBanner] = useState(false);
 
+    const fileSizeLabel = formatFileSize(book.file_size_bytes);
     const progress = state.last_page && state.total_pages ? Math.min(100, Math.round((state.last_page / state.total_pages) * 100)) : null;
 
+    const openGate = (reason: AccountGateReason) => {
+        setGateReason(reason);
+        setGateOpen(true);
+    };
+
     const toggleFavorite = () => {
+        if (!isAuthenticated) {
+            openGate("favorite");
+            return;
+        }
+
         const next = !isFavorite;
         setIsFavorite(next);
         setFavoritePending(true);
@@ -97,71 +141,124 @@ export default function DigitalLibraryShow({ auth, book, state, related, takedow
     };
 
     return (
-        <PortalLayout user={auth.user}>
+        <LibraryShell
+            user={user}
+            loginUrl={loginUrl}
+            signupUrl={signupUrl}
+            bottomInsetClassName={book.available_online ? "pb-24 md:pb-8" : undefined}
+        >
             <Head title={`${book.title} • Digital Library`} />
 
-            <div className="flex flex-col gap-6">
+            <div className="flex flex-col gap-5 sm:gap-6">
+                {/* ── Post-Login Ready to Download Callout ── */}
+                {access?.ready_action === "download" && canDownload && !dismissedReadyBanner && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm">
+                        <div className="flex items-center gap-2.5">
+                            <CheckCircle2 className="size-4.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                            <p className="text-foreground text-xs font-medium sm:text-sm">
+                                Signed in! Your PDF copy is unlocked and ready to download.
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <a
+                                href={download.url(book.id)}
+                                className={cn(
+                                    buttonVariants({ size: "sm" }),
+                                    "h-9 gap-1.5 rounded-lg bg-emerald-600 text-xs font-semibold text-white hover:bg-emerald-700",
+                                )}
+                            >
+                                <Download className="size-3.5" />
+                                Download PDF{fileSizeLabel ? ` (${fileSizeLabel})` : ""}
+                            </a>
+                            <Button
+                                type="button"
+                                size="icon-sm"
+                                variant="ghost"
+                                onClick={() => setDismissedReadyBanner(true)}
+                                aria-label="Dismiss download notice"
+                            >
+                                <X className="size-4" />
+                            </Button>
+                        </div>
+                    </div>
+                )}
+
                 {/* ── Breadcrumb & Back Navigation ── */}
-                <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-                    <nav aria-label="Breadcrumb" className="text-muted-foreground flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <nav aria-label="Breadcrumb" className="text-muted-foreground flex min-w-0 items-center gap-1.5">
                         <Link
                             href={libraryIndex.url()}
-                            className="hover:text-foreground inline-flex items-center gap-1 font-medium transition-colors"
+                            className="hover:text-foreground inline-flex shrink-0 items-center gap-1 font-medium transition-colors"
                         >
                             <ArrowLeft className="size-3.5" />
                             Digital Library
                         </Link>
-                        <ChevronRight className="text-muted-foreground/50 size-3" />
+                        <ChevronRight className="text-muted-foreground/50 size-3 shrink-0" />
                         {book.category && (
                             <>
-                                <span className="hover:text-foreground transition-colors">{book.category}</span>
-                                <ChevronRight className="text-muted-foreground/50 size-3" />
+                                <span className="hidden truncate sm:inline">{book.category}</span>
+                                <ChevronRight className="text-muted-foreground/50 hidden size-3 shrink-0 sm:inline" />
                             </>
                         )}
-                        <span className="text-foreground line-clamp-1 max-w-3xs font-semibold">{book.title}</span>
+                        <span className="text-foreground truncate font-semibold">{book.title}</span>
                     </nav>
 
                     <Link
                         href={libraryIndex.url()}
-                        className={cn(buttonVariants({ variant: "outline", size: "xs" }), "gap-1.5 rounded-lg font-medium")}
+                        className={cn(buttonVariants({ variant: "outline", size: "xs" }), "hidden gap-1.5 rounded-lg font-medium sm:inline-flex")}
                     >
                         <ArrowLeft className="size-3" />
                         Back to Catalog
                     </Link>
                 </div>
 
-                {/* ── Hero Book Showcase (ReUI Frame & FramePanel) ── */}
-                <Frame variant="default" spacing="default" className="border-border/80 bg-card/60 overflow-hidden shadow-xs">
-                    <FramePanel className="via-background relative overflow-hidden bg-linear-to-br from-amber-500/10 to-sky-500/10 p-6 md:p-8">
-                        <div className="relative z-10 grid gap-8 lg:grid-cols-[minmax(14rem,18rem)_1fr] lg:items-center">
-                            {/* Book Cover Container with Depth */}
-                            <div className="mx-auto aspect-3/4 w-full max-w-xs overflow-hidden rounded-xl border border-black/15 shadow-xl transition-transform duration-300 hover:scale-[1.02]">
+                {/* ── Hero Book Showcase ── */}
+                <Frame variant="default" spacing="sm" className="border-border/80 bg-card/70 overflow-hidden shadow-xs">
+                    <FramePanel className="via-background relative overflow-hidden bg-linear-to-br from-amber-500/8 to-sky-500/8 p-4 sm:p-6 md:p-7">
+                        <div className="relative z-10 grid gap-5 lg:grid-cols-[16rem_1fr] lg:items-center lg:gap-10">
+                            {/* Book Cover */}
+                            <div className="mx-auto aspect-3/4 w-full max-w-[10.5rem] overflow-hidden rounded-xl shadow-xl sm:max-w-[14.5rem] lg:max-w-none">
                                 <BookCover title={book.title} author={book.author} coverUrl={book.cover_image_url} priority />
                             </div>
 
-                            {/* Book Metadata & Primary Call-to-Actions */}
-                            <div className="flex flex-col justify-center gap-5">
+                            {/* Metadata & Primary Actions */}
+                            <div className="flex flex-col justify-center gap-4 sm:gap-5">
                                 <div className="space-y-3">
-                                    <div className="flex flex-wrap items-center gap-2">
+                                    <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                                         {book.category && (
                                             <Badge
                                                 variant="outline"
                                                 radius="full"
                                                 size="sm"
-                                                className="text-muted-foreground bg-background/80 font-semibold tracking-wider uppercase"
+                                                className="text-muted-foreground bg-background/85 font-semibold tracking-wider uppercase"
                                             >
                                                 {book.category}
                                             </Badge>
                                         )}
                                         {book.available_online ? (
                                             <Badge variant="success-light" radius="full" size="sm" className="font-semibold tracking-wide">
-                                                <Sparkles className="mr-1 size-3 text-emerald-600 dark:text-emerald-400" />
-                                                Direct-Read Digital Edition
+                                                <Globe2 className="mr-1 size-3" />
+                                                Free to Read Online
                                             </Badge>
                                         ) : (
                                             <Badge variant="invert-light" radius="full" size="sm" className="font-medium tracking-wide">
                                                 <LibraryBig className="text-muted-foreground mr-1 size-3" />
-                                                In-Library Physical Copy
+                                                Physical Copy Only
+                                            </Badge>
+                                        )}
+                                        {book.available_online && book.downloads_allowed && (
+                                            <Badge variant="outline" radius="full" size="sm" className="bg-background/85 text-muted-foreground font-medium">
+                                                {isAuthenticated ? (
+                                                    <>
+                                                        <Download className="mr-1 size-3 text-emerald-600 dark:text-emerald-400" />
+                                                        PDF Download Enabled{fileSizeLabel ? ` · ${fileSizeLabel}` : ""}
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Lock className="mr-1 size-3" />
+                                                        Download with Account{fileSizeLabel ? ` · ${fileSizeLabel}` : ""}
+                                                    </>
+                                                )}
                                             </Badge>
                                         )}
                                         {book.publication_year && (
@@ -169,30 +266,30 @@ export default function DigitalLibraryShow({ auth, book, state, related, takedow
                                                 variant="outline"
                                                 radius="full"
                                                 size="sm"
-                                                className="text-muted-foreground font-medium tabular-nums"
+                                                className="text-muted-foreground bg-background/85 font-medium tabular-nums"
                                             >
-                                                Published {book.publication_year}
+                                                {book.publication_year}
                                             </Badge>
                                         )}
                                     </div>
 
                                     <div>
-                                        <h1 className="text-foreground font-serif text-3xl leading-tight font-semibold tracking-tight md:text-5xl">
+                                        <h1 className="text-foreground font-serif text-2xl leading-tight font-semibold tracking-tight text-balance sm:text-3xl md:text-4xl">
                                             {book.title}
                                         </h1>
-                                        <p className="text-muted-foreground mt-2 text-base md:text-lg">
-                                            {book.author ? `Authored by ${book.author}` : "Author unrecorded in catalog"}
+                                        <p className="text-muted-foreground mt-1.5 text-sm sm:text-base md:text-lg">
+                                            {book.author ? `By ${book.author}` : "Author unrecorded in catalog"}
                                         </p>
                                     </div>
 
-                                    <p className="text-muted-foreground max-w-3xl text-sm leading-relaxed">
+                                    <p className="text-muted-foreground max-w-2xl text-sm leading-relaxed text-pretty">
                                         {book.description || "No catalog synopsis or abstract is recorded for this volume."}
                                     </p>
                                 </div>
 
-                                {/* Reading Progress Meter */}
+                                {/* Reading Progress Meter (Signed-in users) */}
                                 {progress !== null && book.available_online && (
-                                    <div className="border-border/60 bg-background/70 max-w-md space-y-2 rounded-xl border p-3 shadow-2xs">
+                                    <div className="border-border/60 bg-background/80 max-w-md space-y-2 rounded-xl border p-3 shadow-2xs">
                                         <div className="text-muted-foreground flex justify-between text-xs font-semibold tracking-wider uppercase">
                                             <span>Your Reading Progress</span>
                                             <span className="text-foreground font-mono tabular-nums">
@@ -201,59 +298,76 @@ export default function DigitalLibraryShow({ auth, book, state, related, takedow
                                         </div>
                                         <div className="bg-muted h-2 overflow-hidden rounded-full">
                                             <div
-                                                className="bg-primary h-full rounded-full transition-all duration-500"
+                                                className="bg-primary h-full rounded-full transition-[width] duration-300 ease-out"
                                                 style={{ width: `${progress}%` }}
                                             />
                                         </div>
                                     </div>
                                 )}
 
-                                {/* Action Buttons Deck */}
-                                <div className="flex flex-wrap items-center gap-3 pt-2">
+                                {/* Action Buttons Deck (Primary read/download live in sticky mobile bar on < md for online books) */}
+                                <div className="flex flex-wrap items-center gap-2.5 pt-1 sm:gap-3">
                                     {book.available_online ? (
                                         <Link
                                             href={read.url(book.id)}
                                             className={cn(
                                                 buttonVariants({ size: "default" }),
-                                                "gap-2 rounded-xl font-semibold shadow-xs transition-transform active:scale-95",
+                                                "hidden h-11 gap-2 rounded-xl px-5 font-semibold shadow-xs transition-transform active:scale-[0.96] md:inline-flex",
                                             )}
                                         >
                                             <BookOpen className="size-4" />
                                             {state.last_page && state.last_page > 1
                                                 ? `Continue Reading (Page ${state.last_page})`
-                                                : "Read Online eBook"}
+                                                : "Read Online Free"}
                                         </Link>
                                     ) : (
-                                        <Button size="default" disabled className="gap-2 rounded-xl">
+                                        <Button size="default" disabled className="h-11 gap-2 rounded-xl px-5">
                                             <LibraryBig className="size-4" />
                                             Physical Archive Only
                                         </Button>
                                     )}
 
-                                    {book.available_online && book.downloads_allowed && (
+                                    {canDownload && (
                                         <a
                                             href={download.url(book.id)}
                                             className={cn(
                                                 buttonVariants({ variant: "outline", size: "default" }),
-                                                "gap-2 rounded-xl font-semibold shadow-2xs transition-transform active:scale-95",
+                                                "hidden h-11 gap-2 rounded-xl px-4 font-semibold shadow-2xs transition-transform active:scale-[0.96] md:inline-flex",
                                             )}
                                         >
                                             <Download className="size-4" />
-                                            Download PDF
+                                            <span>Download PDF{fileSizeLabel ? ` (${fileSizeLabel})` : ""}</span>
                                         </a>
+                                    )}
+
+                                    {downloadRequiresAuth && (
+                                        <Button
+                                            type="button"
+                                            size="default"
+                                            variant="outline"
+                                            onClick={() => openGate("download")}
+                                            className="hidden h-11 gap-2 rounded-xl px-4 font-semibold shadow-2xs transition-transform active:scale-[0.96] md:inline-flex"
+                                        >
+                                            <Download className="size-4" />
+                                            <span>Download PDF</span>
+                                            <span className="bg-muted text-muted-foreground inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold">
+                                                <Lock className="size-2.5" />
+                                                Account
+                                            </span>
+                                        </Button>
                                     )}
 
                                     <Button
                                         size="default"
                                         variant="outline"
-                                        className="gap-2 rounded-xl shadow-2xs transition-colors"
+                                        className="h-11 gap-2 rounded-xl px-4 shadow-2xs transition-transform active:scale-[0.96]"
                                         onClick={toggleFavorite}
                                         disabled={favoritePending}
                                         aria-label={isFavorite ? "Remove from saved shelf" : "Save to my shelf"}
                                         aria-pressed={isFavorite}
                                     >
                                         <Heart className={cn("size-4", isFavorite && "fill-rose-500 text-rose-500")} />
-                                        <span>{isFavorite ? "Saved on Shelf" : "Save for Later"}</span>
+                                        <span>{isFavorite ? "Saved" : "Save"}</span>
                                     </Button>
                                 </div>
                             </div>
@@ -261,76 +375,86 @@ export default function DigitalLibraryShow({ auth, book, state, related, takedow
                     </FramePanel>
                 </Frame>
 
-                {/* ── Technical Catalog Details & Rights Grid ── */}
-                <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
-                    <div className="space-y-6">
-                        {/* Catalog Metadata Details */}
-                        <Frame variant="default" spacing="sm" className="border-border/80 bg-card/60 shadow-xs">
+                {/* ── Archival Details & Rights Grid ── */}
+                <div className="grid gap-5 lg:grid-cols-[1.5fr_1fr] lg:gap-6">
+                    <div className="space-y-5">
+                        <Frame variant="default" spacing="sm" className="border-border/80 bg-card/70 shadow-xs">
                             <FramePanel className="space-y-4 p-5">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2.5">
                                     <IconTile variant="soft" size="sm" className="text-primary">
                                         <LibraryBig />
                                     </IconTile>
                                     <div>
-                                        <h2 className="text-foreground font-serif text-lg font-semibold">Archival Catalog Details</h2>
-                                        <p className="text-muted-foreground text-xs">Bibliographic records and physical repository parameters.</p>
+                                        <h2 className="text-foreground font-serif text-lg font-semibold">Catalog Details</h2>
+                                        <p className="text-muted-foreground text-xs">Bibliographic metadata and physical shelf record.</p>
                                     </div>
                                 </div>
 
-                                <div className="grid gap-4 pt-2 sm:grid-cols-2 xl:grid-cols-3">
+                                <div className="grid grid-cols-2 gap-3 pt-1 xl:grid-cols-3">
                                     <DetailTile icon={UserRound} label="Author" value={book.author} />
                                     <DetailTile icon={Building2} label="Publisher" value={book.publisher} />
-                                    <DetailTile icon={Calendar} label="Publication Year" value={book.publication_year?.toString()} />
+                                    <DetailTile icon={Calendar} label="Published" value={book.publication_year?.toString()} />
                                     <DetailTile icon={FileText} label="Length" value={book.pages ? `${book.pages} pages` : null} />
-                                    <DetailTile icon={MapPin} label="Stacks Location" value={book.location} />
+                                    <DetailTile icon={MapPin} label="Shelf Location" value={book.location} />
                                     <DetailTile icon={LibraryBig} label="Call Number" value={book.call_number} />
                                     <DetailTile icon={ShieldCheck} label="Accession No." value={book.accession_number} />
-                                    <DetailTile icon={BookOpen} label="ISBN-13" value={book.isbn} />
+                                    <DetailTile icon={BookOpen} label="ISBN" value={book.isbn} />
                                 </div>
                             </FramePanel>
                         </Frame>
 
-                        {/* Author Biography */}
                         {book.author_biography && (
-                            <Frame variant="default" spacing="sm" className="border-border/80 bg-card/60 shadow-xs">
+                            <Frame variant="default" spacing="sm" className="border-border/80 bg-card/70 shadow-xs">
                                 <FramePanel className="space-y-3 p-5">
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-2.5">
                                         <IconTile variant="soft" size="sm" className="text-sky-600 dark:text-sky-400">
                                             <UserRound />
                                         </IconTile>
                                         <h2 className="text-foreground font-serif text-lg font-semibold">About {book.author}</h2>
                                     </div>
-                                    <p className="text-muted-foreground pl-1 text-sm leading-relaxed">{book.author_biography}</p>
+                                    <p className="text-muted-foreground text-sm leading-relaxed text-pretty">{book.author_biography}</p>
                                 </FramePanel>
                             </Frame>
                         )}
                     </div>
 
-                    {/* Rights & Licensing Rail */}
-                    <div className="space-y-6">
-                        <Frame variant="default" spacing="sm" className="border-border/80 bg-card/60 shadow-xs">
+                    {/* Access & Digital Rights Rail */}
+                    <div className="space-y-5">
+                        <Frame variant="default" spacing="sm" className="border-border/80 bg-card/70 shadow-xs">
                             <FramePanel className="space-y-4 p-5">
                                 <div className="flex items-center gap-2.5">
                                     <IconTile variant="soft" size="sm" className="text-amber-600 dark:text-amber-400">
                                         <Scale />
                                     </IconTile>
                                     <div>
-                                        <h2 className="text-foreground font-serif text-base font-semibold">Digital Rights & Licensing</h2>
-                                        <p className="text-muted-foreground text-[11px]">Institutional clearance status</p>
+                                        <h2 className="text-foreground font-serif text-base font-semibold">Access & Licensing</h2>
+                                        <p className="text-muted-foreground text-[11px]">Digital reading and download permissions</p>
                                     </div>
                                 </div>
 
                                 <div className="text-muted-foreground space-y-3 text-xs leading-relaxed">
                                     {book.available_online ? (
                                         <>
-                                            <div className="border-border/70 bg-background/60 space-y-2 rounded-lg border p-3">
-                                                <div className="flex items-center justify-between gap-2">
-                                                    <span className="text-foreground font-semibold">Licensing Basis:</span>
-                                                    <Badge variant="primary-light" size="xs" radius="full">
+                                            <div className="border-border/70 bg-background/70 space-y-2.5 rounded-xl border p-3.5">
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                    <span className="text-foreground font-semibold">Online Reading</span>
+                                                    <Badge variant="success-light" size="xs" radius="full">
+                                                        Open to Everyone
+                                                    </Badge>
+                                                </div>
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                    <span className="text-foreground font-semibold">PDF Download</span>
+                                                    <Badge variant={book.downloads_allowed ? "primary-light" : "outline"} size="xs" radius="full">
+                                                        {book.downloads_allowed ? "Account Required" : "View-Only License"}
+                                                    </Badge>
+                                                </div>
+                                                <div className="border-border/60 flex flex-wrap items-center justify-between gap-2 border-t pt-2.5">
+                                                    <span className="text-foreground font-semibold">Rights Basis</span>
+                                                    <span className="text-foreground font-medium">
                                                         {book.rights_basis
                                                             ? (RIGHTS_LABELS[book.rights_basis] ?? book.rights_basis)
                                                             : "Documented permission"}
-                                                    </Badge>
+                                                    </span>
                                                 </div>
                                                 {book.rights_holder && (
                                                     <p>
@@ -342,24 +466,24 @@ export default function DigitalLibraryShow({ auth, book, state, related, takedow
                                                         href={book.license_url}
                                                         target="_blank"
                                                         rel="noreferrer"
-                                                        className="text-primary hover:text-primary/80 inline-block underline underline-offset-4"
+                                                        className="text-primary hover:text-primary/80 inline-block font-medium underline underline-offset-4"
                                                     >
-                                                        Review license terms & conditions
+                                                        View license terms
                                                     </a>
                                                 )}
                                             </div>
 
-                                            <p className="text-muted-foreground/90 text-[11px]">
+                                            <p className="text-muted-foreground/90 text-[11px] leading-relaxed">
                                                 {book.downloads_allowed
-                                                    ? "Digital downloading is authorized for personal scholarly study. Systematic redistribution or commercial reuse is prohibited."
-                                                    : "In-browser reading is cleared for campus scholars; local downloading and mass export remain restricted."}
+                                                    ? "Anyone may read this digital edition online. Signed-in users may download a personal PDF copy for non-commercial study."
+                                                    : "This digital edition is cleared for online browser reading only; local PDF downloads are disabled by its license."}
                                             </p>
                                         </>
                                     ) : (
-                                        <div className="border-border/70 bg-muted/30 rounded-lg border p-3 text-center">
-                                            <p>No digital distribution license is currently filed for this title.</p>
+                                        <div className="border-border/70 bg-muted/30 rounded-xl border p-3.5 text-center">
+                                            <p>No digital PDF edition is published for this title yet.</p>
                                             <p className="text-muted-foreground mt-1 text-[11px]">
-                                                Please visit the physical library circulation desk to borrow this volume.
+                                                Visit the physical library circulation desk to borrow this volume.
                                             </p>
                                         </div>
                                     )}
@@ -384,38 +508,96 @@ export default function DigitalLibraryShow({ auth, book, state, related, takedow
                     </div>
                 </div>
 
-                {/* ── Related Shelf Recommendations ── */}
+                {/* ── Related Books ── */}
                 {related.length > 0 && (
-                    <section aria-labelledby="related-heading" className="border-border/60 space-y-4 border-t pt-4">
+                    <section aria-labelledby="related-heading" className="border-border/60 space-y-4 border-t pt-5">
                         <div className="space-y-1">
-                            <Badge variant="primary-light" size="xs" radius="full" className="font-semibold tracking-wider uppercase">
-                                Same Academic Discipline
-                            </Badge>
-                            <h2 id="related-heading" className="text-foreground font-serif text-2xl font-semibold">
-                                Related Works & Shelf Neighbors
+                            <p className="text-primary text-[11px] font-semibold tracking-wider uppercase">Same Discipline</p>
+                            <h2 id="related-heading" className="text-foreground font-serif text-xl font-semibold sm:text-2xl">
+                                Related Works
                             </h2>
                         </div>
-                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
                             {related.map((relatedBook) => (
-                                <BookCard key={relatedBook.id} book={relatedBook} />
+                                <BookCard
+                                    key={relatedBook.id}
+                                    book={relatedBook}
+                                    isAuthenticated={isAuthenticated}
+                                    onRequireAuth={() => openGate("favorite")}
+                                />
                             ))}
                         </div>
                     </section>
                 )}
             </div>
-        </PortalLayout>
+
+            {/* ── Mobile Sticky Bottom Action Bar ── */}
+            {book.available_online && (
+                <div className="border-border/80 bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-xl md:hidden">
+                    <div className="mx-auto flex max-w-lg items-center gap-2.5">
+                        <Link
+                            href={read.url(book.id)}
+                            className={cn(
+                                buttonVariants({ size: "default" }),
+                                "h-11 flex-1 gap-2 rounded-xl font-semibold shadow-xs transition-transform active:scale-[0.96]",
+                            )}
+                        >
+                            <BookOpen className="size-4" />
+                            {state.last_page && state.last_page > 1 ? `Resume · Page ${state.last_page}` : "Read Online Free"}
+                        </Link>
+
+                        {canDownload && (
+                            <a
+                                href={download.url(book.id)}
+                                className={cn(
+                                    buttonVariants({ variant: "outline", size: "icon" }),
+                                    "size-11 shrink-0 rounded-xl transition-transform active:scale-[0.96]",
+                                )}
+                                aria-label="Download PDF"
+                            >
+                                <Download className="size-4.5" />
+                            </a>
+                        )}
+
+                        {downloadRequiresAuth && (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() => openGate("download")}
+                                className="relative size-11 shrink-0 rounded-xl transition-transform active:scale-[0.96]"
+                                aria-label="Sign in to download PDF"
+                            >
+                                <Download className="size-4.5" />
+                                <Lock className="bg-background ring-border absolute right-1.5 bottom-1.5 size-3 rounded-full p-0.5 ring-1" />
+                            </Button>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            <AccountGateDialog
+                open={gateOpen}
+                onOpenChange={setGateOpen}
+                reason={gateReason}
+                bookTitle={book.title}
+                fileSizeLabel={fileSizeLabel}
+                signInUrl={gateReason === "download" ? authenticateUrl : loginUrl}
+                signUpUrl={signupUrl}
+            />
+        </LibraryShell>
     );
 }
 
 function DetailTile({ icon: Icon, label, value }: { icon: React.ComponentType<{ className?: string }>; label: string; value?: string | null }) {
     return (
-        <div className="border-border/60 bg-background/60 flex items-start gap-3 rounded-lg border p-2.5">
+        <div className="border-border/60 bg-background/65 flex items-start gap-2.5 rounded-xl border p-2.5 sm:p-3">
             <IconTile variant="soft" size="xs" className="text-muted-foreground mt-0.5 shrink-0">
                 <Icon className="size-3.5" />
             </IconTile>
             <div className="min-w-0">
                 <p className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">{label}</p>
-                <p className="text-foreground mt-0.5 text-xs font-medium wrap-break-word">{value || "—"}</p>
+                <p className="text-foreground mt-0.5 text-xs font-medium wrap-break-word tabular-nums">{value || "—"}</p>
             </div>
         </div>
     );
