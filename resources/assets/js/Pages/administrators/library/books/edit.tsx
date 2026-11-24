@@ -33,11 +33,14 @@ import {
     ChevronUp,
     Copy,
     Download,
+    EyeOff,
     FileCheck2,
     FileText,
+    Globe2,
     Image as ImageIcon,
     Layers,
     Loader2,
+    Lock,
     RefreshCw,
     Save,
     ShieldBan,
@@ -61,6 +64,14 @@ import {
 import { PdfMetadataModal, type PdfMetadataDraft } from "./components/pdf-metadata-modal";
 
 type BookFormatValue = "physical" | "ebook" | "hybrid";
+type DigitalEditionVisibilityValue = "public" | "authenticated" | "members_only";
+
+interface DigitalVisibilityOption {
+    value: DigitalEditionVisibilityValue;
+    label: string;
+    short_label: string;
+    description: string;
+}
 
 interface BookFormData {
     format: BookFormatValue;
@@ -81,6 +92,7 @@ interface BookFormData {
     location: string;
     status: string;
     digital_pdf: File | null;
+    digital_visibility: DigitalEditionVisibilityValue;
     digital_rights_basis: string;
     digital_rights_holder: string;
     digital_license_url: string;
@@ -94,6 +106,7 @@ interface DigitalEditionRecord {
     mime_type: string;
     size_bytes: number;
     status: "draft" | "published";
+    visibility: DigitalEditionVisibilityValue;
     downloads_allowed: boolean;
     rights_basis: string | null;
     rights_holder: string | null;
@@ -142,6 +155,7 @@ interface Props {
         statuses: CatalogOption[];
         formats?: CatalogOption[];
         digital_rights_bases: CatalogOption[];
+        digital_visibilities?: DigitalVisibilityOption[];
     };
     flash?: {
         type: string;
@@ -157,6 +171,33 @@ interface BookFormError {
     field: string;
     message: string;
 }
+
+const DEFAULT_VISIBILITY_OPTIONS: DigitalVisibilityOption[] = [
+    {
+        value: "public",
+        label: "Public (Open to everyone)",
+        short_label: "Public",
+        description: "Listed in the public catalog and readable online without signing in.",
+    },
+    {
+        value: "authenticated",
+        label: "Account required to read",
+        short_label: "Account to read",
+        description: "Visible in the catalog to everyone, but readers must sign in to open and read the eBook.",
+    },
+    {
+        value: "members_only",
+        label: "Signed-in users only (Hidden from guests)",
+        short_label: "Signed-in only",
+        description: "Hidden from guests in the catalog and only discoverable and readable after signing in.",
+    },
+];
+
+const VISIBILITY_ICON_MAP: Record<DigitalEditionVisibilityValue, typeof Globe2> = {
+    public: Globe2,
+    authenticated: Lock,
+    members_only: EyeOff,
+};
 
 const FORMAT_CARDS: {
     value: BookFormatValue;
@@ -175,7 +216,7 @@ const FORMAT_CARDS: {
     {
         value: "ebook",
         title: "eBook (PDF)",
-        description: "Digital-only PDF hosted for open browser reading. Always starts as a Draft.",
+        description: "Digital-only PDF hosted for browser reading with configurable visibility. Always starts as a Draft.",
         badge: "No shelf copies",
         Icon: FileText,
     },
@@ -351,6 +392,10 @@ export default function LibraryBookEdit({
 }: Props) {
     const resolvedInitialFormat: BookFormatValue = book?.format ?? initial_format ?? "physical";
     const canManageDigital = book ? book.can_manage_digital_edition : Boolean(can_manage_digital_edition);
+    const visibilityOptions =
+        options.digital_visibilities && options.digital_visibilities.length > 0
+            ? options.digital_visibilities
+            : DEFAULT_VISIBILITY_OPTIONS;
 
     const form = useForm<BookFormData>({
         format: resolvedInitialFormat,
@@ -371,6 +416,7 @@ export default function LibraryBookEdit({
         location: book?.location ?? "",
         status: book?.status ?? "available",
         digital_pdf: null,
+        digital_visibility: "public",
         digital_rights_basis: "",
         digital_rights_holder: "",
         digital_license_url: "",
@@ -1185,12 +1231,39 @@ export default function LibraryBookEdit({
                                     >
                                         <span className="flex items-center gap-2">
                                             <ShieldCheck className="size-4 text-emerald-600 dark:text-emerald-400" />
-                                            Pre-fill Draft rights documentation (optional)
+                                            Pre-fill Draft visibility &amp; rights documentation (optional)
                                         </span>
                                         {showCreateRightsPanel ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
                                     </button>
                                     {showCreateRightsPanel && (
                                         <div className="grid gap-4 border-t p-4 sm:grid-cols-2">
+                                            <div className="space-y-1.5 sm:col-span-2">
+                                                <Label>Reader visibility (once published)</Label>
+                                                <Select
+                                                    value={form.data.digital_visibility}
+                                                    onValueChange={(value) =>
+                                                        form.setData("digital_visibility", value as DigitalEditionVisibilityValue)
+                                                    }
+                                                >
+                                                    <SelectTrigger className="h-10 rounded-xl" data-testid="create-digital-visibility-select">
+                                                        <SelectValue placeholder="Choose who can view and read this eBook" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {visibilityOptions.map((option) => (
+                                                            <SelectItem key={option.value} value={option.value}>
+                                                                {option.label}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                                <p className="text-muted-foreground text-xs">
+                                                    {visibilityOptions.find((option) => option.value === form.data.digital_visibility)?.description}
+                                                </p>
+                                                {bookError("digital_visibility") && (
+                                                    <p className="text-destructive text-xs">{bookError("digital_visibility")}</p>
+                                                )}
+                                            </div>
+
                                             <div className="space-y-1.5">
                                                 <Label>Rights basis</Label>
                                                 <Select
@@ -1602,7 +1675,13 @@ export default function LibraryBookEdit({
                 />
             )}
 
-            {book && <DigitalEditionSection book={book} rightsBases={options.digital_rights_bases} />}
+            {book && (
+                <DigitalEditionSection
+                    book={book}
+                    rightsBases={options.digital_rights_bases}
+                    visibilityOptions={visibilityOptions}
+                />
+            )}
         </AdminLayout>
     );
 }
@@ -1610,6 +1689,7 @@ export default function LibraryBookEdit({
 interface DigitalEditionFormData {
     pdf: File | null;
     status: "draft" | "published";
+    visibility: DigitalEditionVisibilityValue;
     downloads_allowed: boolean;
     rights_basis: string;
     rights_holder: string;
@@ -1619,11 +1699,20 @@ interface DigitalEditionFormData {
     rights_confirmed: boolean;
 }
 
-function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rightsBases: CatalogOption[] }) {
+function DigitalEditionSection({
+    book,
+    rightsBases,
+    visibilityOptions,
+}: {
+    book: BookRecord;
+    rightsBases: CatalogOption[];
+    visibilityOptions: DigitalVisibilityOption[];
+}) {
     const edition = book.digital_edition;
     const form = useForm<DigitalEditionFormData>({
         pdf: null,
         status: edition?.is_piracy_blocked ? "draft" : (edition?.status ?? "draft"),
+        visibility: edition?.visibility ?? "public",
         downloads_allowed: edition?.downloads_allowed ?? false,
         rights_basis: edition?.rights_basis ?? "",
         rights_holder: edition?.rights_holder ?? "",
@@ -1642,6 +1731,7 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
         form.setData({
             pdf: null,
             status: edition?.is_piracy_blocked ? "draft" : (edition?.status ?? "draft"),
+            visibility: edition?.visibility ?? "public",
             downloads_allowed: edition?.downloads_allowed ?? false,
             rights_basis: edition?.rights_basis ?? "",
             rights_holder: edition?.rights_holder ?? "",
@@ -1652,7 +1742,7 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
         });
         setPendingScan(null);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [edition?.id, edition?.uploaded_at, edition?.status, edition?.is_piracy_blocked]);
+    }, [edition?.id, edition?.uploaded_at, edition?.status, edition?.visibility, edition?.is_piracy_blocked]);
 
     if (!book.can_manage_digital_edition) {
         return edition ? (
@@ -1749,6 +1839,7 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
         }
 
         if (edition) {
+            form.transform((data) => data);
             form.put(updateDigitalEdition.url(book.id), {
                 errorBag: "digitalEdition",
                 preserveScroll: true,
@@ -1770,7 +1861,7 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
 
         try {
             await navigator.clipboard.writeText(absoluteUrl);
-            toast.success("Public reader link copied to clipboard.");
+            toast.success("Reader link copied to clipboard.");
         } catch {
             toast.error("Could not copy link automatically.", {
                 description: absoluteUrl,
@@ -1779,6 +1870,9 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
     };
 
     const publishing = form.data.status === "published" && !form.data.pdf && !piracyBlocked;
+    const savedVisibility = edition?.visibility ?? "public";
+    const savedVisibilityMeta = visibilityOptions.find((option) => option.value === savedVisibility) ?? visibilityOptions[0];
+    const SavedVisibilityIcon = VISIBILITY_ICON_MAP[savedVisibility] ?? Globe2;
 
     return (
         <form id="digital-edition" onSubmit={handleSubmit} className="mt-6 scroll-mt-20">
@@ -1807,14 +1901,32 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
                                     {piracyBlocked ? (
                                         <Badge className="bg-rose-600 text-white hover:bg-rose-600">Blocked · Piracy Source</Badge>
                                     ) : (
-                                        <Badge variant={edition?.status === "published" ? "default" : "secondary"}>
-                                            {edition?.status === "published" ? "Published" : edition ? "Draft" : "Not uploaded"}
-                                        </Badge>
+                                        <>
+                                            <Badge variant={edition?.status === "published" ? "default" : "secondary"}>
+                                                {edition?.status === "published" ? "Published" : edition ? "Draft" : "Not uploaded"}
+                                            </Badge>
+                                            {edition && savedVisibilityMeta && (
+                                                <Badge
+                                                    variant="outline"
+                                                    className={cn(
+                                                        "gap-1.5",
+                                                        savedVisibility === "members_only"
+                                                            ? "border-amber-600/40 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                                                            : savedVisibility === "authenticated"
+                                                              ? "border-sky-600/40 bg-sky-500/10 text-sky-800 dark:text-sky-300"
+                                                              : "border-emerald-600/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300",
+                                                    )}
+                                                >
+                                                    <SavedVisibilityIcon className="size-3" />
+                                                    {savedVisibilityMeta.short_label}
+                                                </Badge>
+                                            )}
+                                        </>
                                     )}
                                 </div>
                                 <CardDescription className="mt-1 text-pretty">
-                                    Upload a rights-cleared PDF for open browser reading without an account. New files default to draft, and PDF
-                                    downloads require a signed-in account and stay off unless explicitly allowed.
+                                    Upload a rights-cleared PDF and control whether guests can browse or read it without an account. New files
+                                    default to draft, and PDF downloads always require a signed-in account when enabled.
                                 </CardDescription>
                             </div>
                         </div>
@@ -1920,7 +2032,7 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
                                     <SelectContent>
                                         <SelectItem value="draft">Draft — staff only</SelectItem>
                                         <SelectItem value="published" disabled={piracyBlocked}>
-                                            Published — public browser reading
+                                            Published — live with selected visibility
                                         </SelectItem>
                                     </SelectContent>
                                 </Select>
@@ -1953,6 +2065,65 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
                                     </SelectContent>
                                 </Select>
                                 {form.errors.rights_basis && <p className="text-destructive text-sm">{form.errors.rights_basis}</p>}
+                            </div>
+
+                            <div className="space-y-2.5 sm:col-span-2">
+                                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                                    <Label>Reader visibility</Label>
+                                    <span className="text-muted-foreground text-xs">Controls who can see and open this eBook once published</span>
+                                </div>
+                                <div
+                                    role="radiogroup"
+                                    aria-label="Reader visibility"
+                                    className="grid gap-3 md:grid-cols-3"
+                                >
+                                    {visibilityOptions.map((option) => {
+                                        const OptionIcon = VISIBILITY_ICON_MAP[option.value] ?? Globe2;
+                                        const selected = form.data.visibility === option.value;
+
+                                        return (
+                                            <button
+                                                key={option.value}
+                                                type="button"
+                                                role="radio"
+                                                aria-checked={selected}
+                                                disabled={piracyBlocked}
+                                                data-testid={`digital-visibility-${option.value}`}
+                                                onClick={() => form.setData("visibility", option.value)}
+                                                className={cn(
+                                                    "flex flex-col items-start gap-2 rounded-xl border p-3.5 text-left transition-all",
+                                                    selected
+                                                        ? "border-primary bg-primary/5 ring-primary/20 ring-2"
+                                                        : "border-border hover:border-primary/40 hover:bg-muted/35",
+                                                    piracyBlocked && "cursor-not-allowed opacity-60",
+                                                )}
+                                            >
+                                                <div className="flex w-full items-center justify-between gap-2">
+                                                    <span
+                                                        className={cn(
+                                                            "flex size-8 items-center justify-center rounded-lg",
+                                                            selected
+                                                                ? "bg-primary text-primary-foreground"
+                                                                : "bg-muted text-muted-foreground",
+                                                        )}
+                                                    >
+                                                        <OptionIcon className="size-4" />
+                                                    </span>
+                                                    {selected && (
+                                                        <Badge variant="secondary" className="text-[11px]">
+                                                            Selected
+                                                        </Badge>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-semibold leading-snug">{option.short_label}</p>
+                                                    <p className="text-muted-foreground mt-1 text-xs leading-relaxed">{option.description}</p>
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                {form.errors.visibility && <p className="text-destructive text-sm">{form.errors.visibility}</p>}
                             </div>
 
                             <div className="space-y-2">
@@ -2027,8 +2198,8 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
                             <div className="text-muted-foreground mt-3 space-y-3 text-sm leading-6">
                                 <p>Only publish files that KoAkademy owns or is authorized to reproduce and communicate digitally.</p>
                                 <p>
-                                    Physical ownership, educational purpose, or disabling the download button does not itself grant digital
-                                    distribution rights.
+                                    Physical ownership, educational purpose, requiring an account, or disabling downloads does not itself grant
+                                    digital distribution rights.
                                 </p>
                             </div>
                             {publishing && (
@@ -2040,7 +2211,7 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
                                     />
                                     <Label htmlFor="rights_confirmed" className="text-sm leading-6">
                                         I reviewed the documentation and confirm KoAkademy has the right to publish this PDF for online reading
-                                        under the selected terms.
+                                        under the selected visibility and terms.
                                     </Label>
                                 </div>
                             )}

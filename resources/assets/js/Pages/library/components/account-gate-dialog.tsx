@@ -8,9 +8,9 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { Bookmark, CheckCircle2, Download, Heart, Lock, LogIn, UserPlus } from "lucide-react";
+import { BookOpen, Bookmark, CheckCircle2, Download, Heart, Lock, LogIn, UserPlus } from "lucide-react";
 
-export type AccountGateReason = "download" | "favorite" | "bookmark";
+export type AccountGateReason = "read" | "download" | "favorite" | "bookmark";
 
 interface AccountGateDialogProps {
     open: boolean;
@@ -31,6 +31,15 @@ const COPY: Record<
         primaryLabel: string;
     }
 > = {
+    read: {
+        badge: "Account required to read",
+        title: "Sign in to read this eBook",
+        description: (bookTitle) =>
+            bookTitle
+                ? `“${bookTitle}” is available to signed-in members. Sign in or create a free account to open and read this eBook online.`
+                : "This eBook requires a signed-in account. Sign in or create a free account to open and read it online.",
+        primaryLabel: "Sign in to read",
+    },
     download: {
         badge: "Account required to download",
         title: "Sign in to download this PDF",
@@ -68,7 +77,7 @@ export function AccountGateDialog({
     signUpUrl,
 }: AccountGateDialogProps) {
     const content = COPY[reason];
-    const ReasonIcon = reason === "download" ? Download : reason === "favorite" ? Heart : Bookmark;
+    const ReasonIcon = reason === "read" ? BookOpen : reason === "download" ? Download : reason === "favorite" ? Heart : Bookmark;
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -97,8 +106,9 @@ export function AccountGateDialog({
                         <li className="flex items-start gap-2">
                             <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
                             <span>
-                                Download licensed PDF eBooks for offline reading
-                                {fileSizeLabel ? ` (${fileSizeLabel})` : ""}
+                                {reason === "read"
+                                    ? "Read member-restricted eBooks directly in the online PDF reader"
+                                    : `Download licensed PDF eBooks for offline reading${fileSizeLabel ? ` (${fileSizeLabel})` : ""}`}
                             </span>
                         </li>
                         <li className="flex items-start gap-2">

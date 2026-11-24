@@ -10,6 +10,8 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Modules\LibrarySystem\Enums\BookFormat;
+use Modules\LibrarySystem\Enums\DigitalEditionVisibility;
 use Modules\LibrarySystem\Models\Book;
 use Modules\LibrarySystem\Models\Category;
 use Modules\LibrarySystem\Models\DigitalEdition;
@@ -30,6 +32,7 @@ final class DigitalCatalogService
         $query = Book::query()
             ->select([
                 'id',
+                'format',
                 'title',
                 'isbn',
                 'call_number',
@@ -47,9 +50,13 @@ final class DigitalCatalogService
                 'author:id,name',
                 'category:id,name,color',
                 'digitalEdition' => fn ($query) => $query
-                    ->accessible()
-                    ->select(['id', 'book_id', 'downloads_allowed', 'size_bytes', 'rights_expires_at']),
-            ])
+                    ->catalogVisibleFor($user)
+                    ->select(['id', 'book_id', 'visibility', 'downloads_allowed', 'size_bytes', 'rights_expires_at']),
+            ]);
+
+        $this->applyGuestBookVisibility($query, $user);
+
+        $query
             ->when($user instanceof User, function (Builder $query) use ($user): void {
                 $query->withExists([
                     'userStates as is_favorite' => fn (Builder $stateQuery) => $stateQuery
@@ -77,11 +84,11 @@ final class DigitalCatalogService
             )
             ->when(
                 $availability === 'online',
-                fn (Builder $query) => $query->whereHas('digitalEdition', fn (Builder $query) => $query->accessible())
+                fn (Builder $query) => $query->whereHas('digitalEdition', fn (Builder $query) => $query->catalogVisibleFor($user))
             )
             ->when(
                 $availability === 'catalog',
-                fn (Builder $query) => $query->whereDoesntHave('digitalEdition', fn (Builder $query) => $query->accessible())
+                fn (Builder $query) => $query->whereDoesntHave('digitalEdition', fn (Builder $query) => $query->catalogVisibleFor($user))
             )
             ->when(
                 $user instanceof User && $collection === 'favorites',
@@ -127,9 +134,12 @@ final class DigitalCatalogService
      */
     public function catalogStats(?User $user): array
     {
+        $catalogBooksQuery = Book::query();
+        $this->applyGuestBookVisibility($catalogBooksQuery, $user);
+
         return [
-            'catalog_books' => Book::query()->count(),
-            'available_online' => DigitalEdition::query()->accessible()->whereHas('book')->count(),
+            'catalog_books' => $catalogBooksQuery->count(),
+            'available_online' => DigitalEdition::query()->catalogVisibleFor($user)->whereHas('book')->count(),
             'favorites' => $user instanceof User
                 ? UserBookState::query()
                     ->where('user_id', $user->id)
@@ -143,19 +153,23 @@ final class DigitalCatalogService
     /**
      * @return Collection<int, array<string, mixed>>
      */
-    public function relatedBooks(Book $book, int $limit = 4): Collection
+    public function relatedBooks(Book $book, ?User $user = null, int $limit = 4): Collection
     {
-        return Book::query()
-            ->select(['id', 'title', 'author_id', 'category_id', 'publication_year', 'pages', 'description', 'cover_image', 'cover_image_path'])
+        $query = Book::query()
+            ->select(['id', 'format', 'title', 'author_id', 'category_id', 'publication_year', 'pages', 'description', 'cover_image', 'cover_image_path'])
             ->where('category_id', $book->category_id)
             ->whereKeyNot($book->id)
             ->with([
                 'author:id,name',
                 'category:id,name,color',
                 'digitalEdition' => fn ($query) => $query
-                    ->accessible()
-                    ->select(['id', 'book_id', 'downloads_allowed', 'size_bytes']),
-            ])
+                    ->catalogVisibleFor($user)
+                    ->select(['id', 'book_id', 'visibility', 'downloads_allowed', 'size_bytes']),
+            ]);
+
+        $this->applyGuestBookVisibility($query, $user);
+
+        return $query
             ->orderBy('title')
             ->orderBy('id')
             ->limit($limit)
@@ -180,6 +194,8 @@ final class DigitalCatalogService
             'description' => Str::limit(strip_tags((string) $book->description), 150),
             'cover_image_url' => $this->coverImageUrl($book),
             'available_online' => $edition instanceof DigitalEdition,
+            'visibility' => $edition?->resolvedVisibility()->value,
+            'requires_account_to_read' => $edition instanceof DigitalEdition && $edition->requiresAccountToRead(),
             'downloads_allowed' => $edition?->downloads_allowed ?? false,
             'file_size_bytes' => $edition?->size_bytes,
             'is_favorite' => (bool) ($book->is_favorite ?? false),
@@ -210,6 +226,8 @@ final class DigitalCatalogService
             'location' => $book->location,
             'cover_image_url' => $this->coverImageUrl($book),
             'available_online' => $edition instanceof DigitalEdition,
+            'visibility' => $edition?->resolvedVisibility()->value,
+            'requires_account_to_read' => $edition instanceof DigitalEdition && $edition->requiresAccountToRead(),
             'downloads_allowed' => $edition?->downloads_allowed ?? false,
             'file_size_bytes' => $edition?->size_bytes,
             'rights_basis' => $edition?->rights_basis?->value,
@@ -217,6 +235,21 @@ final class DigitalCatalogService
             'license_url' => $edition?->license_url,
             'rights_expires_at' => $edition?->rights_expires_at?->toIso8601String(),
         ];
+    }
+
+    private function applyGuestBookVisibility(Builder $query, ?User $user): void
+    {
+        if ($user instanceof User) {
+            return;
+        }
+
+        $query->where(function (Builder $visible): void {
+            $visible
+                ->where('format', '!=', BookFormat::Ebook->value)
+                ->orWhereDoesntHave('digitalEdition', fn (Builder $editionQuery) => $editionQuery
+                    ->accessible()
+                    ->where('visibility', DigitalEditionVisibility::MembersOnly->value));
+        });
     }
 
     private function applySort(Builder $query, string $sort, string $collection, ?User $user): void

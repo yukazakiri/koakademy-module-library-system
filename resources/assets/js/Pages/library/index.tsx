@@ -10,7 +10,13 @@ import { isAdministratorPortalRole } from "@/lib/portal-role";
 import { cn } from "@/lib/utils";
 import { index as adminLibraryIndex } from "@/routes/administrators/library";
 import { index as libraryIndex } from "@/routes/library";
-import { favorite as favoriteBook, read as readBook, show as showBook, unfavorite as unfavoriteBook } from "@/routes/library/books";
+import {
+    authenticate as authenticateBook,
+    favorite as favoriteBook,
+    read as readBook,
+    show as showBook,
+    unfavorite as unfavoriteBook,
+} from "@/routes/library/books";
 import type { User } from "@/types/user";
 import { Head, Link, router } from "@inertiajs/react";
 import {
@@ -27,6 +33,7 @@ import {
     LayoutGrid,
     LibraryBig,
     List,
+    Lock,
     RotateCcw,
     Search,
     ShieldCheck,
@@ -34,7 +41,7 @@ import {
     X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { AccountGateDialog } from "./components/account-gate-dialog";
+import { AccountGateDialog, type AccountGateReason } from "./components/account-gate-dialog";
 import { BookCard, type LibraryBookCardData } from "./components/book-card";
 import { BookCover } from "./components/book-cover";
 import { LibraryShell } from "./components/library-shell";
@@ -93,7 +100,8 @@ export default function DigitalLibraryIndex({ auth, books, filters, options, sta
     const [search, setSearch] = useState(filters.search);
     const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
     const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
-    const [gateBookTitle, setGateBookTitle] = useState<string | undefined>(undefined);
+    const [gateBook, setGateBook] = useState<LibraryBookCardData | null>(null);
+    const [gateReason, setGateReason] = useState<AccountGateReason>("favorite");
     const [gateOpen, setGateOpen] = useState(false);
 
     const searchInputRef = useRef<HTMLInputElement>(null);
@@ -172,8 +180,9 @@ export default function DigitalLibraryIndex({ auth, books, filters, options, sta
         router.get(libraryIndex.url(), {}, { preserveState: true, replace: true });
     };
 
-    const openFavoriteGate = (book: LibraryBookCardData) => {
-        setGateBookTitle(book.title);
+    const openAuthGate = (book: LibraryBookCardData, reason: "favorite" | "read" = "favorite") => {
+        setGateBook(book);
+        setGateReason(reason);
         setGateOpen(true);
     };
 
@@ -765,7 +774,7 @@ export default function DigitalLibraryIndex({ auth, books, filters, options, sta
                                     book={book}
                                     priority={index < 6}
                                     isAuthenticated={isAuthenticated}
-                                    onRequireAuth={openFavoriteGate}
+                                    onRequireAuth={openAuthGate}
                                 />
                             ))}
                         </div>
@@ -775,87 +784,117 @@ export default function DigitalLibraryIndex({ auth, books, filters, options, sta
                     {books.data.length > 0 && viewMode === "list" && (
                         <Frame variant="default" spacing="xs" className="border-border/80 bg-card/70 overflow-hidden shadow-xs">
                             <div className="divide-border/60 divide-y">
-                                {books.data.map((book) => (
-                                    <div
-                                        key={book.id}
-                                        className="hover:bg-muted/35 flex flex-col gap-3 p-3.5 transition-colors sm:flex-row sm:items-center sm:justify-between"
-                                    >
-                                        <div className="flex min-w-0 items-center gap-3.5">
-                                            <Link
-                                                href={showBook.url(book.id)}
-                                                prefetch
-                                                className="h-18 w-13 shrink-0 overflow-hidden rounded-md shadow-2xs"
-                                            >
-                                                <BookCover title={book.title} author={book.author} coverUrl={book.cover_image_url} />
-                                            </Link>
-                                            <div className="min-w-0 space-y-1">
-                                                <div className="flex flex-wrap items-center gap-2">
-                                                    <Link
-                                                        href={showBook.url(book.id)}
-                                                        prefetch
-                                                        className="text-foreground hover:text-primary line-clamp-1 font-serif text-sm font-semibold transition-colors sm:text-base"
-                                                    >
-                                                        {book.title}
-                                                    </Link>
-                                                    {book.available_online ? (
-                                                        <Badge variant="success-light" size="xs" radius="full">
-                                                            Read Online
-                                                        </Badge>
-                                                    ) : (
-                                                        <Badge variant="invert-light" size="xs" radius="full">
-                                                            In Library
-                                                        </Badge>
-                                                    )}
+                                {books.data.map((book) => {
+                                    const readRequiresAuth = Boolean(
+                                        book.available_online && book.requires_account_to_read && !isAuthenticated,
+                                    );
+
+                                    return (
+                                        <div
+                                            key={book.id}
+                                            className="hover:bg-muted/35 flex flex-col gap-3 p-3.5 transition-colors sm:flex-row sm:items-center sm:justify-between"
+                                        >
+                                            <div className="flex min-w-0 items-center gap-3.5">
+                                                <Link
+                                                    href={showBook.url(book.id)}
+                                                    prefetch
+                                                    className="h-18 w-13 shrink-0 overflow-hidden rounded-md shadow-2xs"
+                                                >
+                                                    <BookCover title={book.title} author={book.author} coverUrl={book.cover_image_url} />
+                                                </Link>
+                                                <div className="min-w-0 space-y-1">
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <Link
+                                                            href={showBook.url(book.id)}
+                                                            prefetch
+                                                            className="text-foreground hover:text-primary line-clamp-1 font-serif text-sm font-semibold transition-colors sm:text-base"
+                                                        >
+                                                            {book.title}
+                                                        </Link>
+                                                        {book.available_online ? (
+                                                            readRequiresAuth ? (
+                                                                <Badge
+                                                                    variant="outline"
+                                                                    size="xs"
+                                                                    radius="full"
+                                                                    className="gap-1 border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                                                                >
+                                                                    <Lock className="size-2.5" />
+                                                                    Sign in to Read
+                                                                </Badge>
+                                                            ) : (
+                                                                <Badge variant="success-light" size="xs" radius="full">
+                                                                    Read Online
+                                                                </Badge>
+                                                            )
+                                                        ) : (
+                                                            <Badge variant="invert-light" size="xs" radius="full">
+                                                                In Library
+                                                            </Badge>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-muted-foreground truncate text-xs">
+                                                        {book.author || "Unknown author"}
+                                                        {book.category && <span> · {book.category}</span>}
+                                                        {book.publication_year && <span className="tabular-nums"> · {book.publication_year}</span>}
+                                                    </p>
+                                                    <p className="text-muted-foreground/85 line-clamp-1 text-xs">
+                                                        {book.description || "No catalog synopsis."}
+                                                    </p>
                                                 </div>
-                                                <p className="text-muted-foreground truncate text-xs">
-                                                    {book.author || "Unknown author"}
-                                                    {book.category && <span> · {book.category}</span>}
-                                                    {book.publication_year && <span className="tabular-nums"> · {book.publication_year}</span>}
-                                                </p>
-                                                <p className="text-muted-foreground/85 line-clamp-1 text-xs">
-                                                    {book.description || "No catalog synopsis."}
-                                                </p>
+                                            </div>
+
+                                            <div className="flex shrink-0 items-center gap-2 self-end sm:self-center">
+                                                {readRequiresAuth ? (
+                                                    <Button
+                                                        type="button"
+                                                        size="sm"
+                                                        onClick={() => openAuthGate(book, "read")}
+                                                        className="h-9 gap-1.5 rounded-lg text-xs font-semibold transition-transform active:scale-[0.96]"
+                                                    >
+                                                        <Lock className="size-3.5" />
+                                                        Sign in to Read
+                                                    </Button>
+                                                ) : (
+                                                    <Link
+                                                        href={book.available_online ? readBook.url(book.id) : showBook.url(book.id)}
+                                                        prefetch
+                                                        className={cn(
+                                                            buttonVariants({ variant: book.available_online ? "default" : "outline", size: "sm" }),
+                                                            "h-9 gap-1.5 rounded-lg text-xs font-semibold transition-transform active:scale-[0.96]",
+                                                        )}
+                                                    >
+                                                        {book.available_online ? <BookOpen className="size-3.5" /> : <Bookmark className="size-3.5" />}
+                                                        {book.available_online ? "Read Now" : "Details"}
+                                                    </Link>
+                                                )}
+                                                <Button
+                                                    type="button"
+                                                    size="icon-sm"
+                                                    variant="ghost"
+                                                    className="size-9 rounded-lg"
+                                                    onClick={() => {
+                                                        if (!isAuthenticated) {
+                                                            openAuthGate(book, "favorite");
+                                                            return;
+                                                        }
+                                                        const next = !book.is_favorite;
+                                                        const routeDefinition = next ? favoriteBook(book.id) : unfavoriteBook(book.id);
+                                                        router.visit(routeDefinition.url, {
+                                                            method: routeDefinition.method,
+                                                            preserveScroll: true,
+                                                            preserveState: true,
+                                                            only: ["books", "stats"],
+                                                        });
+                                                    }}
+                                                    aria-label={book.is_favorite ? "Remove from shelf" : "Save to shelf"}
+                                                >
+                                                    <Heart className={cn("size-4", book.is_favorite && "fill-rose-500 text-rose-500")} />
+                                                </Button>
                                             </div>
                                         </div>
-
-                                        <div className="flex shrink-0 items-center gap-2 self-end sm:self-center">
-                                            <Link
-                                                href={book.available_online ? readBook.url(book.id) : showBook.url(book.id)}
-                                                prefetch
-                                                className={cn(
-                                                    buttonVariants({ variant: book.available_online ? "default" : "outline", size: "sm" }),
-                                                    "h-9 gap-1.5 rounded-lg text-xs font-semibold transition-transform active:scale-[0.96]",
-                                                )}
-                                            >
-                                                {book.available_online ? <BookOpen className="size-3.5" /> : <Bookmark className="size-3.5" />}
-                                                {book.available_online ? "Read Now" : "Details"}
-                                            </Link>
-                                            <Button
-                                                type="button"
-                                                size="icon-sm"
-                                                variant="ghost"
-                                                className="size-9 rounded-lg"
-                                                onClick={() => {
-                                                    if (!isAuthenticated) {
-                                                        openFavoriteGate(book);
-                                                        return;
-                                                    }
-                                                    const next = !book.is_favorite;
-                                                    const routeDefinition = next ? favoriteBook(book.id) : unfavoriteBook(book.id);
-                                                    router.visit(routeDefinition.url, {
-                                                        method: routeDefinition.method,
-                                                        preserveScroll: true,
-                                                        preserveState: true,
-                                                        only: ["books", "stats"],
-                                                    });
-                                                }}
-                                                aria-label={book.is_favorite ? "Remove from shelf" : "Save to shelf"}
-                                            >
-                                                <Heart className={cn("size-4", book.is_favorite && "fill-rose-500 text-rose-500")} />
-                                            </Button>
-                                        </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </Frame>
                     )}
@@ -948,9 +987,13 @@ export default function DigitalLibraryIndex({ auth, books, filters, options, sta
             <AccountGateDialog
                 open={gateOpen}
                 onOpenChange={setGateOpen}
-                reason="favorite"
-                bookTitle={gateBookTitle}
-                signInUrl={loginUrl}
+                reason={gateReason}
+                bookTitle={gateBook?.title}
+                signInUrl={
+                    gateReason === "read" && gateBook
+                        ? authenticateBook.url(gateBook.id, { query: { from: "read", action: "read" } })
+                        : loginUrl
+                }
                 signUpUrl={signupUrl}
             />
         </LibraryShell>

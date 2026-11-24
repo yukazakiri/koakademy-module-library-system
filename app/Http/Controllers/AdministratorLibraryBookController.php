@@ -18,6 +18,7 @@ use Inertia\Response;
 use Modules\LibrarySystem\Actions\StoreDigitalEdition;
 use Modules\LibrarySystem\Enums\BookFormat;
 use Modules\LibrarySystem\Enums\DigitalEditionStatus;
+use Modules\LibrarySystem\Enums\DigitalEditionVisibility;
 use Modules\LibrarySystem\Enums\DigitalRightsBasis;
 use Modules\LibrarySystem\Http\Requests\Administrators\BulkDeleteBookRequest;
 use Modules\LibrarySystem\Http\Requests\Administrators\BulkForceDeleteBookRequest;
@@ -47,7 +48,7 @@ final class AdministratorLibraryBookController extends Controller
         $sort = in_array($sort, $allowedSorts, true) ? $sort : 'created_at';
         $direction = in_array($direction, ['asc', 'desc'], true) ? $direction : 'desc';
         $perPage = in_array($perPage, [10, 20, 50, 100], true) ? $perPage : 20;
-        $digital = is_string($digital) && in_array($digital, ['published', 'downloadable', 'draft', 'none', 'ebook_only'], true)
+        $digital = is_string($digital) && in_array($digital, ['published', 'account_required', 'downloadable', 'draft', 'none', 'ebook_only'], true)
             ? $digital
             : null;
 
@@ -67,6 +68,10 @@ final class AdministratorLibraryBookController extends Controller
             })
             ->when(is_string($status) && $status !== '' && $status !== 'all', fn ($query) => $query->where('status', $status))
             ->when($digital === 'published', fn ($query) => $query->whereHas('digitalEdition', fn ($digitalQuery) => $digitalQuery->accessible()))
+            ->when($digital === 'account_required', fn ($query) => $query->whereHas('digitalEdition', fn ($digitalQuery) => $digitalQuery->accessible()->whereIn('visibility', [
+                DigitalEditionVisibility::Authenticated->value,
+                DigitalEditionVisibility::MembersOnly->value,
+            ])))
             ->when($digital === 'downloadable', fn ($query) => $query->whereHas('digitalEdition', fn ($digitalQuery) => $digitalQuery->accessible()->where('downloads_allowed', true)))
             ->when($digital === 'draft', fn ($query) => $query->whereHas('digitalEdition', fn ($digitalQuery) => $digitalQuery->where('status', DigitalEditionStatus::Draft->value)))
             ->when($digital === 'ebook_only', fn ($query) => $query->where('format', BookFormat::Ebook->value))
@@ -102,6 +107,7 @@ final class AdministratorLibraryBookController extends Controller
                 'cover_image_url' => $this->resolveCoverImageUrl($book),
                 'digital_edition' => $book->digitalEdition ? [
                     'status' => $book->digitalEdition->status->value,
+                    'visibility' => $book->digitalEdition->resolvedVisibility()->value,
                     'is_accessible' => $book->digitalEdition->isAccessible(),
                     'downloads_allowed' => $book->digitalEdition->downloads_allowed,
                     'size_bytes' => $book->digitalEdition->size_bytes,
@@ -142,6 +148,7 @@ final class AdministratorLibraryBookController extends Controller
                 'digital' => [
                     ['value' => 'all', 'label' => 'All formats'],
                     ['value' => 'published', 'label' => 'Published eBooks'],
+                    ['value' => 'account_required', 'label' => 'Account-required eBooks'],
                     ['value' => 'downloadable', 'label' => 'Downloadable eBooks'],
                     ['value' => 'draft', 'label' => 'Draft eBooks'],
                     ['value' => 'ebook_only', 'label' => 'eBook-only titles'],
@@ -229,6 +236,7 @@ final class AdministratorLibraryBookController extends Controller
 
         $digitalPdf = $request->file('digital_pdf');
         $digitalAttributes = [
+            'visibility' => $rawValidated['digital_visibility'] ?? null,
             'rights_basis' => $rawValidated['digital_rights_basis'] ?? null,
             'rights_holder' => $rawValidated['digital_rights_holder'] ?? null,
             'license_url' => $rawValidated['digital_license_url'] ?? null,
@@ -239,6 +247,7 @@ final class AdministratorLibraryBookController extends Controller
         unset(
             $validated['cover_image_upload'],
             $validated['digital_pdf'],
+            $validated['digital_visibility'],
             $validated['digital_rights_basis'],
             $validated['digital_rights_holder'],
             $validated['digital_license_url'],
@@ -307,6 +316,7 @@ final class AdministratorLibraryBookController extends Controller
                     'mime_type' => $edition->mime_type,
                     'size_bytes' => $edition->size_bytes,
                     'status' => $edition->status->value,
+                    'visibility' => $edition->resolvedVisibility()->value,
                     'downloads_allowed' => $edition->downloads_allowed,
                     'rights_basis' => $edition->rights_basis?->value,
                     'rights_holder' => $edition->rights_holder,
@@ -342,6 +352,7 @@ final class AdministratorLibraryBookController extends Controller
         unset(
             $validated['cover_image_upload'],
             $validated['digital_pdf'],
+            $validated['digital_visibility'],
             $validated['digital_rights_basis'],
             $validated['digital_rights_holder'],
             $validated['digital_license_url'],
@@ -556,6 +567,14 @@ final class AdministratorLibraryBookController extends Controller
                 ->map(fn (DigitalRightsBasis $basis): array => [
                     'value' => $basis->value,
                     'label' => $basis->label(),
+                ])
+                ->all(),
+            'digital_visibilities' => collect(DigitalEditionVisibility::cases())
+                ->map(fn (DigitalEditionVisibility $visibility): array => [
+                    'value' => $visibility->value,
+                    'label' => $visibility->label(),
+                    'short_label' => $visibility->shortLabel(),
+                    'description' => $visibility->description(),
                 ])
                 ->all(),
         ];

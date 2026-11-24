@@ -8,6 +8,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\LibrarySystem\Enums\DigitalEditionStatus;
+use Modules\LibrarySystem\Enums\DigitalEditionVisibility;
 use Modules\LibrarySystem\Enums\DigitalRightsBasis;
 use Modules\LibrarySystem\Models\Book;
 
@@ -35,6 +36,7 @@ final class StoreDigitalEditionRequest extends FormRequest
                 'max:'.config('librarysystem.ebooks.max_upload_kilobytes', 92160),
             ],
             'status' => ['required', Rule::enum(DigitalEditionStatus::class)],
+            'visibility' => ['nullable', Rule::enum(DigitalEditionVisibility::class)],
             'downloads_allowed' => ['required', 'boolean'],
             'rights_basis' => [
                 Rule::requiredIf($publishing),

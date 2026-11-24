@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
 use Modules\LibrarySystem\Actions\StoreDigitalEdition;
+use Modules\LibrarySystem\Enums\DigitalEditionVisibility;
 use Modules\LibrarySystem\Http\Requests\Administrators\StoreDigitalEditionRequest;
 use Modules\LibrarySystem\Http\Requests\Administrators\UpdateDigitalEditionRequest;
 use Modules\LibrarySystem\Models\Book;
@@ -56,7 +57,11 @@ final class AdministratorDigitalEditionController extends Controller
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            $edition->fill($storeDigitalEdition->editionAttributes($request->validated(), $user));
+            $edition->fill($storeDigitalEdition->editionAttributes(
+                $request->validated(),
+                $user,
+                $edition->resolvedVisibility()
+            ));
             $edition->save();
 
             activity('library')
@@ -65,6 +70,7 @@ final class AdministratorDigitalEditionController extends Controller
                 ->withProperties([
                     'digital_edition_id' => $edition->id,
                     'status' => $edition->status->value,
+                    'visibility' => $edition->resolvedVisibility()->value,
                     'downloads_allowed' => $edition->downloads_allowed,
                 ])
                 ->log('Updated digital edition publication settings');
@@ -72,11 +78,18 @@ final class AdministratorDigitalEditionController extends Controller
             return $edition;
         });
 
+        $message = 'Digital edition saved as a draft.';
+        if ($edition->isAccessible()) {
+            $message = match ($edition->resolvedVisibility()) {
+                DigitalEditionVisibility::MembersOnly => 'Digital edition published for signed-in users only (hidden from guests).',
+                DigitalEditionVisibility::Authenticated => 'Digital edition published (account required to read).',
+                DigitalEditionVisibility::Public => 'Digital edition published publicly.',
+            };
+        }
+
         return back()->with('flash', [
             'type' => 'success',
-            'message' => $edition->isAccessible()
-                ? 'Digital edition published.'
-                : 'Digital edition saved as a draft.',
+            'message' => $message,
         ]);
     }
 

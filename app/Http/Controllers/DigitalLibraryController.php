@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 use Inertia\Response;
+use Modules\LibrarySystem\Enums\DigitalEditionVisibility;
 use Modules\LibrarySystem\Http\Requests\DigitalLibraryCatalogRequest;
 use Modules\LibrarySystem\Models\Book;
 use Modules\LibrarySystem\Models\DigitalEdition;
@@ -59,19 +60,33 @@ final class DigitalLibraryController extends Controller
         ]);
     }
 
-    public function show(Request $request, Book $book): Response
+    public function show(Request $request, Book $book): Response|RedirectResponse
     {
         $user = $request->user();
         $authenticatedUser = $user instanceof User ? $user : null;
+
+        if (! $authenticatedUser instanceof User
+            && $book->isEbookOnly()
+            && $book->digitalEdition()
+                ->accessible()
+                ->where('visibility', DigitalEditionVisibility::MembersOnly->value)
+                ->exists()) {
+            if ($request->expectsJson()) {
+                abort(401, 'Sign in to view this eBook.');
+            }
+
+            return redirect()->guest(Route::has('login') ? route('login') : '/login');
+        }
 
         $book->load([
             'author:id,name,biography',
             'category:id,name,color,description',
             'digitalEdition' => fn ($query) => $query
-                ->accessible()
+                ->catalogVisibleFor($authenticatedUser)
                 ->select([
                     'id',
                     'book_id',
+                    'visibility',
                     'downloads_allowed',
                     'size_bytes',
                     'rights_basis',
@@ -90,6 +105,9 @@ final class DigitalLibraryController extends Controller
 
         $edition = $book->digitalEdition;
         $downloadsAllowed = $edition instanceof DigitalEdition && $edition->downloads_allowed;
+        $readRequiresAuth = $edition instanceof DigitalEdition
+            && ! $authenticatedUser instanceof User
+            && $edition->requiresAccountToRead();
         $readyAction = $authenticatedUser instanceof User && $request->string('action')->toString() === 'download'
             ? 'download'
             : null;
@@ -102,10 +120,17 @@ final class DigitalLibraryController extends Controller
                 'total_pages' => $state?->total_pages,
                 'last_read_at' => $state?->last_read_at?->toIso8601String(),
             ],
-            'related' => $this->catalog->relatedBooks($book),
+            'related' => $this->catalog->relatedBooks($book, $authenticatedUser),
             'takedown_email' => config('librarysystem.ebooks.takedown_email'),
             'access' => [
                 ...$this->authUrls($authenticatedUser),
+                'can_read' => $edition instanceof DigitalEdition && ! $readRequiresAuth,
+                'read_requires_auth' => $readRequiresAuth,
+                'read_authenticate_url' => route('library.books.authenticate', [
+                    'book' => $book,
+                    'from' => 'read',
+                    'action' => 'read',
+                ]),
                 'can_download' => $authenticatedUser instanceof User && $downloadsAllowed,
                 'download_requires_auth' => ! $authenticatedUser instanceof User && $downloadsAllowed,
                 'authenticate_url' => route('library.books.authenticate', $book),
@@ -114,7 +139,7 @@ final class DigitalLibraryController extends Controller
         ]);
     }
 
-    public function read(Request $request, Book $book): Response
+    public function read(Request $request, Book $book): Response|RedirectResponse
     {
         $user = $request->user();
         $authenticatedUser = $user instanceof User ? $user : null;
@@ -123,6 +148,15 @@ final class DigitalLibraryController extends Controller
         $edition = $book->digitalEdition;
 
         abort_unless($edition instanceof DigitalEdition, 404);
+
+        if (! $authenticatedUser instanceof User && $edition->requiresAccountToRead()) {
+            if ($request->expectsJson()) {
+                abort(401, 'Sign in to read this eBook.');
+            }
+
+            return redirect()->guest(Route::has('login') ? route('login') : '/login');
+        }
+
         $this->delivery->assertObjectExists($edition);
 
         $state = null;
@@ -151,6 +185,7 @@ final class DigitalLibraryController extends Controller
                 'id' => $book->id,
                 'title' => $book->title,
                 'author' => $book->author?->name,
+                'visibility' => $edition->resolvedVisibility()->value,
                 'downloads_allowed' => $edition->downloads_allowed,
                 'file_size_bytes' => $edition->size_bytes,
             ],
@@ -171,9 +206,14 @@ final class DigitalLibraryController extends Controller
         ]);
     }
 
-    public function content(Book $book): HttpResponse
+    public function content(Request $request, Book $book): HttpResponse
     {
         $edition = $this->delivery->accessibleEdition($book);
+
+        if ($edition->requiresAccountToRead()) {
+            abort_unless($request->user() instanceof User, 401, 'Sign in to view this eBook.');
+        }
+
         $this->delivery->assertObjectExists($edition);
 
         return $this->delivery->inlineResponse($book, $edition);
@@ -192,8 +232,13 @@ final class DigitalLibraryController extends Controller
     public function authenticate(Request $request, Book $book): RedirectResponse
     {
         $from = $request->string('from')->toString();
+        $action = $request->string('action', 'download')->toString();
 
         if ($from === 'read' && $book->digitalEdition()->accessible()->exists()) {
+            if ($action === 'read') {
+                return redirect()->route('library.books.read', $book);
+            }
+
             return redirect()->route('library.books.read', [
                 'book' => $book,
                 'action' => 'download',

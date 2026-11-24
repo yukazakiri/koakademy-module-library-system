@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\LibrarySystem\Enums\DigitalEditionStatus;
+use Modules\LibrarySystem\Enums\DigitalEditionVisibility;
 use Modules\LibrarySystem\Enums\DigitalRightsBasis;
 
 final class DigitalEdition extends Model
@@ -24,6 +25,7 @@ final class DigitalEdition extends Model
         'size_bytes',
         'sha256',
         'status',
+        'visibility',
         'downloads_allowed',
         'rights_basis',
         'rights_holder',
@@ -43,6 +45,7 @@ final class DigitalEdition extends Model
     protected $attributes = [
         'mime_type' => 'application/pdf',
         'status' => 'draft',
+        'visibility' => 'public',
         'downloads_allowed' => false,
     ];
 
@@ -64,6 +67,29 @@ final class DigitalEdition extends Model
     public function rightsConfirmedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'rights_confirmed_by');
+    }
+
+    public function resolvedVisibility(): DigitalEditionVisibility
+    {
+        return $this->visibility instanceof DigitalEditionVisibility
+            ? $this->visibility
+            : DigitalEditionVisibility::Public;
+    }
+
+    public function requiresAccountToRead(): bool
+    {
+        return $this->resolvedVisibility()->requiresAccountToRead();
+    }
+
+    public function isVisibleToGuestsInCatalog(): bool
+    {
+        return $this->resolvedVisibility()->isVisibleToGuestsInCatalog();
+    }
+
+    public function isViewableBy(?User $user): bool
+    {
+        return $this->isAccessible()
+            && ($user instanceof User || ! $this->requiresAccountToRead());
     }
 
     public function isPiracyBlocked(): bool
@@ -95,6 +121,19 @@ final class DigitalEdition extends Model
             });
     }
 
+    public function scopeCatalogVisibleFor(Builder $query, ?User $user): Builder
+    {
+        return $query
+            ->accessible()
+            ->when(! $user instanceof User, function (Builder $guestQuery): void {
+                $guestQuery->where(function (Builder $nested): void {
+                    $nested
+                        ->whereNull('visibility')
+                        ->orWhere('visibility', '!=', DigitalEditionVisibility::MembersOnly->value);
+                });
+            });
+    }
+
     public function isAccessible(): bool
     {
         return $this->status === DigitalEditionStatus::Published
@@ -108,6 +147,7 @@ final class DigitalEdition extends Model
     {
         return [
             'status' => DigitalEditionStatus::class,
+            'visibility' => DigitalEditionVisibility::class,
             'rights_basis' => DigitalRightsBasis::class,
             'downloads_allowed' => 'boolean',
             'size_bytes' => 'integer',

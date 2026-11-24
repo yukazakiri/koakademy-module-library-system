@@ -20,6 +20,7 @@ use Filament\Tables\Filters\TrashedFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Modules\LibrarySystem\Enums\BookFormat;
+use Modules\LibrarySystem\Enums\DigitalEditionVisibility;
 use Modules\LibrarySystem\Models\Book;
 
 final class BooksTable
@@ -124,6 +125,11 @@ final class BooksTable
                         }
 
                         if ($edition->isAccessible()) {
+                            $visibility = $edition->resolvedVisibility();
+                            if ($visibility !== DigitalEditionVisibility::Public) {
+                                return 'Published · '.$visibility->shortLabel();
+                            }
+
                             return $edition->downloads_allowed ? 'Published · Downloadable' : 'Published · Read only';
                         }
 
@@ -141,6 +147,10 @@ final class BooksTable
                         }
 
                         if ($edition->isAccessible()) {
+                            if ($edition->resolvedVisibility() !== DigitalEditionVisibility::Public) {
+                                return 'primary';
+                            }
+
                             return $edition->downloads_allowed ? 'success' : 'info';
                         }
 
@@ -199,6 +209,14 @@ final class BooksTable
                 Filter::make('published_ebook')
                     ->label('Published eBooks')
                     ->query(fn (Builder $query): Builder => $query->whereHas('digitalEdition', fn (Builder $digitalQuery): Builder => $digitalQuery->accessible()))
+                    ->toggle(),
+
+                Filter::make('account_required_ebook')
+                    ->label('Account-Required eBooks')
+                    ->query(fn (Builder $query): Builder => $query->whereHas('digitalEdition', fn (Builder $digitalQuery): Builder => $digitalQuery->accessible()->whereIn('visibility', [
+                        DigitalEditionVisibility::Authenticated->value,
+                        DigitalEditionVisibility::MembersOnly->value,
+                    ])))
                     ->toggle(),
 
                 Filter::make('available_only')

@@ -4,7 +4,7 @@ import { IconTile } from "@/components/reui/icon-tile";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { index as libraryIndex } from "@/routes/library";
-import { download, favorite, read, unfavorite } from "@/routes/library/books";
+import { authenticate, download, favorite, read, unfavorite } from "@/routes/library/books";
 import type { User } from "@/types/user";
 import { Head, Link, router } from "@inertiajs/react";
 import {
@@ -50,6 +50,8 @@ interface BookDetail {
     location: string | null;
     cover_image_url: string | null;
     available_online: boolean;
+    visibility?: "public" | "authenticated" | "members_only" | null;
+    requires_account_to_read?: boolean;
     downloads_allowed: boolean;
     file_size_bytes: number | null;
     rights_basis: string | null;
@@ -60,6 +62,9 @@ interface BookDetail {
 
 interface AccessProps {
     is_authenticated: boolean;
+    can_read?: boolean;
+    read_requires_auth?: boolean;
+    read_authenticate_url?: string;
     can_download: boolean;
     download_requires_auth: boolean;
     authenticate_url: string;
@@ -99,23 +104,27 @@ function formatFileSize(bytes?: number | null): string | null {
 export default function DigitalLibraryShow({ auth, book, state, related, takedown_email, access }: Props) {
     const user = auth?.user ?? null;
     const isAuthenticated = Boolean(user);
+    const readRequiresAuth = access?.read_requires_auth ?? (!isAuthenticated && book.available_online && Boolean(book.requires_account_to_read));
     const canDownload = access?.can_download ?? (isAuthenticated && book.available_online && book.downloads_allowed);
     const downloadRequiresAuth = access?.download_requires_auth ?? (!isAuthenticated && book.available_online && book.downloads_allowed);
     const loginUrl = access?.login_url ?? "/login";
     const signupUrl = access?.signup_url ?? "/signup";
     const authenticateUrl = access?.authenticate_url ?? loginUrl;
+    const readAuthenticateUrl = access?.read_authenticate_url ?? authenticate.url(book.id, { query: { from: "read", action: "read" } });
 
     const [isFavorite, setIsFavorite] = useState(state.is_favorite);
     const [favoritePending, setFavoritePending] = useState(false);
     const [gateOpen, setGateOpen] = useState(false);
     const [gateReason, setGateReason] = useState<AccountGateReason>("download");
+    const [gateTarget, setGateTarget] = useState<{ title: string; signInUrl: string; fileSizeLabel?: string | null } | null>(null);
     const [dismissedReadyBanner, setDismissedReadyBanner] = useState(false);
 
     const fileSizeLabel = formatFileSize(book.file_size_bytes);
     const progress = state.last_page && state.total_pages ? Math.min(100, Math.round((state.last_page / state.total_pages) * 100)) : null;
 
-    const openGate = (reason: AccountGateReason) => {
+    const openGate = (reason: AccountGateReason, target?: { title: string; signInUrl: string; fileSizeLabel?: string | null }) => {
         setGateReason(reason);
+        setGateTarget(target ?? null);
         setGateOpen(true);
     };
 
@@ -236,10 +245,32 @@ export default function DigitalLibraryShow({ auth, book, state, related, takedow
                                             </Badge>
                                         )}
                                         {book.available_online ? (
-                                            <Badge variant="success-light" radius="full" size="sm" className="font-semibold tracking-wide">
-                                                <Globe2 className="mr-1 size-3" />
-                                                Free to Read Online
-                                            </Badge>
+                                            readRequiresAuth ? (
+                                                <Badge
+                                                    variant="outline"
+                                                    radius="full"
+                                                    size="sm"
+                                                    className="border-amber-500/40 bg-amber-500/12 font-semibold tracking-wide text-amber-800 dark:text-amber-200"
+                                                >
+                                                    <Lock className="mr-1 size-3" />
+                                                    Account Required to Read
+                                                </Badge>
+                                            ) : book.visibility === "members_only" ? (
+                                                <Badge variant="primary-light" radius="full" size="sm" className="font-semibold tracking-wide">
+                                                    <ShieldCheck className="mr-1 size-3" />
+                                                    Members-Only eBook
+                                                </Badge>
+                                            ) : book.visibility === "authenticated" ? (
+                                                <Badge variant="success-light" radius="full" size="sm" className="font-semibold tracking-wide">
+                                                    <ShieldCheck className="mr-1 size-3" />
+                                                    Signed-In Reading Unlocked
+                                                </Badge>
+                                            ) : (
+                                                <Badge variant="success-light" radius="full" size="sm" className="font-semibold tracking-wide">
+                                                    <Globe2 className="mr-1 size-3" />
+                                                    Free to Read Online
+                                                </Badge>
+                                            )
                                         ) : (
                                             <Badge variant="invert-light" radius="full" size="sm" className="font-medium tracking-wide">
                                                 <LibraryBig className="text-muted-foreground mr-1 size-3" />
@@ -308,18 +339,32 @@ export default function DigitalLibraryShow({ auth, book, state, related, takedow
                                 {/* Action Buttons Deck (Primary read/download live in sticky mobile bar on < md for online books) */}
                                 <div className="flex flex-wrap items-center gap-2.5 pt-1 sm:gap-3">
                                     {book.available_online ? (
-                                        <Link
-                                            href={read.url(book.id)}
-                                            className={cn(
-                                                buttonVariants({ size: "default" }),
-                                                "hidden h-11 gap-2 rounded-xl px-5 font-semibold shadow-xs transition-transform active:scale-[0.96] md:inline-flex",
-                                            )}
-                                        >
-                                            <BookOpen className="size-4" />
-                                            {state.last_page && state.last_page > 1
-                                                ? `Continue Reading (Page ${state.last_page})`
-                                                : "Read Online Free"}
-                                        </Link>
+                                        readRequiresAuth ? (
+                                            <Button
+                                                type="button"
+                                                size="default"
+                                                onClick={() => openGate("read")}
+                                                className="hidden h-11 gap-2 rounded-xl px-5 font-semibold shadow-xs transition-transform active:scale-[0.96] md:inline-flex"
+                                            >
+                                                <Lock className="size-4" />
+                                                Sign in to Read
+                                            </Button>
+                                        ) : (
+                                            <Link
+                                                href={read.url(book.id)}
+                                                className={cn(
+                                                    buttonVariants({ size: "default" }),
+                                                    "hidden h-11 gap-2 rounded-xl px-5 font-semibold shadow-xs transition-transform active:scale-[0.96] md:inline-flex",
+                                                )}
+                                            >
+                                                <BookOpen className="size-4" />
+                                                {state.last_page && state.last_page > 1
+                                                    ? `Continue Reading (Page ${state.last_page})`
+                                                    : book.requires_account_to_read
+                                                      ? "Read Online"
+                                                      : "Read Online Free"}
+                                            </Link>
+                                        )
                                     ) : (
                                         <Button size="default" disabled className="h-11 gap-2 rounded-xl px-5">
                                             <LibraryBig className="size-4" />
@@ -438,8 +483,16 @@ export default function DigitalLibraryShow({ auth, book, state, related, takedow
                                             <div className="border-border/70 bg-background/70 space-y-2.5 rounded-xl border p-3.5">
                                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                                     <span className="text-foreground font-semibold">Online Reading</span>
-                                                    <Badge variant="success-light" size="xs" radius="full">
-                                                        Open to Everyone
+                                                    <Badge
+                                                        variant={book.requires_account_to_read ? "primary-light" : "success-light"}
+                                                        size="xs"
+                                                        radius="full"
+                                                    >
+                                                        {book.visibility === "members_only"
+                                                            ? "Signed-in Users Only"
+                                                            : book.visibility === "authenticated"
+                                                              ? "Account Required"
+                                                              : "Open to Everyone"}
                                                     </Badge>
                                                 </div>
                                                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -474,9 +527,13 @@ export default function DigitalLibraryShow({ auth, book, state, related, takedow
                                             </div>
 
                                             <p className="text-muted-foreground/90 text-[11px] leading-relaxed">
-                                                {book.downloads_allowed
-                                                    ? "Anyone may read this digital edition online. Signed-in users may download a personal PDF copy for non-commercial study."
-                                                    : "This digital edition is cleared for online browser reading only; local PDF downloads are disabled by its license."}
+                                                {book.requires_account_to_read
+                                                    ? book.downloads_allowed
+                                                        ? "A signed-in account is required to read this digital edition online or download a personal PDF copy for non-commercial study."
+                                                        : "A signed-in account is required to read this digital edition online; local PDF downloads are disabled by its license."
+                                                    : book.downloads_allowed
+                                                      ? "Anyone may read this digital edition online. Signed-in users may download a personal PDF copy for non-commercial study."
+                                                      : "This digital edition is cleared for online browser reading only; local PDF downloads are disabled by its license."}
                                             </p>
                                         </>
                                     ) : (
@@ -523,7 +580,16 @@ export default function DigitalLibraryShow({ auth, book, state, related, takedow
                                     key={relatedBook.id}
                                     book={relatedBook}
                                     isAuthenticated={isAuthenticated}
-                                    onRequireAuth={() => openGate("favorite")}
+                                    onRequireAuth={(targetBook, reason = "favorite") =>
+                                        openGate(reason, {
+                                            title: targetBook.title,
+                                            signInUrl:
+                                                reason === "read"
+                                                    ? authenticate.url(targetBook.id, { query: { from: "read", action: "read" } })
+                                                    : loginUrl,
+                                            fileSizeLabel: formatFileSize(targetBook.file_size_bytes),
+                                        })
+                                    }
                                 />
                             ))}
                         </div>
@@ -535,16 +601,32 @@ export default function DigitalLibraryShow({ auth, book, state, related, takedow
             {book.available_online && (
                 <div className="border-border/80 bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-xl md:hidden">
                     <div className="mx-auto flex max-w-lg items-center gap-2.5">
-                        <Link
-                            href={read.url(book.id)}
-                            className={cn(
-                                buttonVariants({ size: "default" }),
-                                "h-11 flex-1 gap-2 rounded-xl font-semibold shadow-xs transition-transform active:scale-[0.96]",
-                            )}
-                        >
-                            <BookOpen className="size-4" />
-                            {state.last_page && state.last_page > 1 ? `Resume · Page ${state.last_page}` : "Read Online Free"}
-                        </Link>
+                        {readRequiresAuth ? (
+                            <Button
+                                type="button"
+                                size="default"
+                                onClick={() => openGate("read")}
+                                className="h-11 flex-1 gap-2 rounded-xl font-semibold shadow-xs transition-transform active:scale-[0.96]"
+                            >
+                                <Lock className="size-4" />
+                                Sign in to Read
+                            </Button>
+                        ) : (
+                            <Link
+                                href={read.url(book.id)}
+                                className={cn(
+                                    buttonVariants({ size: "default" }),
+                                    "h-11 flex-1 gap-2 rounded-xl font-semibold shadow-xs transition-transform active:scale-[0.96]",
+                                )}
+                            >
+                                <BookOpen className="size-4" />
+                                {state.last_page && state.last_page > 1
+                                    ? `Resume · Page ${state.last_page}`
+                                    : book.requires_account_to_read
+                                      ? "Read Online"
+                                      : "Read Online Free"}
+                            </Link>
+                        )}
 
                         {canDownload && (
                             <a
@@ -580,9 +662,12 @@ export default function DigitalLibraryShow({ auth, book, state, related, takedow
                 open={gateOpen}
                 onOpenChange={setGateOpen}
                 reason={gateReason}
-                bookTitle={book.title}
-                fileSizeLabel={fileSizeLabel}
-                signInUrl={gateReason === "download" ? authenticateUrl : loginUrl}
+                bookTitle={gateTarget?.title ?? book.title}
+                fileSizeLabel={gateTarget ? gateTarget.fileSizeLabel : fileSizeLabel}
+                signInUrl={
+                    gateTarget?.signInUrl ??
+                    (gateReason === "read" ? readAuthenticateUrl : gateReason === "download" ? authenticateUrl : loginUrl)
+                }
                 signUpUrl={signupUrl}
             />
         </LibraryShell>

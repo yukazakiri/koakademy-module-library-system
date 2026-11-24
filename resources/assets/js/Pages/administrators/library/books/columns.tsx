@@ -11,13 +11,14 @@ import {
 import { read as readDigitalBook } from "@/routes/library/books";
 import { Link } from "@inertiajs/react";
 import { ColumnDef } from "@tanstack/react-table";
-import { ArrowUpDown, BookOpen, Copy, Download, FileText, MoreHorizontal, Pencil, ShieldBan, Trash2, Zap } from "lucide-react";
+import { ArrowUpDown, BookOpen, Copy, Download, EyeOff, FileText, Lock, MoreHorizontal, Pencil, ShieldBan, Trash2, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 declare let route: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 export type BookDigitalEditionSummary = {
     status: "draft" | "published";
+    visibility?: "public" | "authenticated" | "members_only";
     is_accessible: boolean;
     downloads_allowed: boolean;
     size_bytes: number;
@@ -200,8 +201,10 @@ export const columns: ColumnDef<Book>[] = [
             }
 
             if (edition.is_accessible) {
+                const visibility = edition.visibility ?? "public";
+
                 return (
-                    <div className="flex flex-col items-start gap-0.5">
+                    <div className="flex flex-col items-start gap-1">
                         <Badge
                             className={
                                 edition.downloads_allowed
@@ -212,7 +215,21 @@ export const columns: ColumnDef<Book>[] = [
                             {edition.downloads_allowed ? <Download className="size-3" /> : <BookOpen className="size-3" />}
                             {edition.downloads_allowed ? "Downloadable" : "Read only"}
                         </Badge>
-                        <span className="text-muted-foreground text-[11px] tabular-nums">{formatFileSize(edition.size_bytes)}</span>
+                        <div className="text-muted-foreground flex flex-wrap items-center gap-1.5 text-[11px] tabular-nums">
+                            {visibility === "authenticated" && (
+                                <span className="inline-flex items-center gap-0.5 font-medium text-amber-700 dark:text-amber-300">
+                                    <Lock className="size-2.5" />
+                                    Account to read ·
+                                </span>
+                            )}
+                            {visibility === "members_only" && (
+                                <span className="inline-flex items-center gap-0.5 font-medium text-violet-700 dark:text-violet-300">
+                                    <EyeOff className="size-2.5" />
+                                    Signed-in only ·
+                                </span>
+                            )}
+                            <span>{formatFileSize(edition.size_bytes)}</span>
+                        </div>
                     </div>
                 );
             }

@@ -8,6 +8,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\LibrarySystem\Enums\DigitalEditionStatus;
+use Modules\LibrarySystem\Enums\DigitalEditionVisibility;
 use Modules\LibrarySystem\Enums\DigitalRightsBasis;
 use Modules\LibrarySystem\Models\Book;
 use Modules\LibrarySystem\Models\DigitalEdition;
@@ -28,6 +29,7 @@ final class UpdateDigitalEditionRequest extends FormRequest
 
         return [
             'status' => ['required', Rule::enum(DigitalEditionStatus::class)],
+            'visibility' => ['nullable', Rule::enum(DigitalEditionVisibility::class)],
             'downloads_allowed' => ['required', 'boolean'],
             'rights_basis' => [
                 Rule::requiredIf($publishing),

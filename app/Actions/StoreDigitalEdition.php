@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Modules\LibrarySystem\Enums\BookFormat;
 use Modules\LibrarySystem\Enums\DigitalEditionStatus;
+use Modules\LibrarySystem\Enums\DigitalEditionVisibility;
 use Modules\LibrarySystem\Models\Book;
 use Modules\LibrarySystem\Models\DigitalEdition;
 use Modules\LibrarySystem\Services\DigitalEditionInspectionService;
@@ -90,8 +91,12 @@ final class StoreDigitalEdition
                     ? ['disk' => $edition->disk, 'path' => $edition->path]
                     : null;
 
+                $existingVisibility = $edition instanceof DigitalEdition
+                    ? $edition->resolvedVisibility()
+                    : null;
+
                 $edition ??= new DigitalEdition(['book_id' => $book->id]);
-                $edition->fill($this->editionAttributes($attributes, $actor));
+                $edition->fill($this->editionAttributes($attributes, $actor, $existingVisibility));
                 $edition->fill([
                     'disk' => $disk,
                     'path' => $path,
@@ -112,6 +117,7 @@ final class StoreDigitalEdition
                     ->withProperties([
                         'digital_edition_id' => $edition->id,
                         'status' => $edition->status->value,
+                        'visibility' => $edition->resolvedVisibility()->value,
                         'downloads_allowed' => $edition->downloads_allowed,
                         'rights_risk_level' => $riskLevel,
                         'piracy_blocked' => (bool) ($rightsScan['piracy_blocked'] ?? false),
@@ -142,13 +148,21 @@ final class StoreDigitalEdition
      * @param  array<string, mixed>  $attributes
      * @return array<string, mixed>
      */
-    public function editionAttributes(array $attributes, User $actor): array
-    {
+    public function editionAttributes(
+        array $attributes,
+        User $actor,
+        ?DigitalEditionVisibility $defaultVisibility = null
+    ): array {
         $status = DigitalEditionStatus::from((string) $attributes['status']);
         $publishing = $status === DigitalEditionStatus::Published;
+        $fallbackVisibility = $defaultVisibility ?? DigitalEditionVisibility::Public;
+        $visibility = isset($attributes['visibility']) && $attributes['visibility'] !== ''
+            ? (DigitalEditionVisibility::tryFrom((string) $attributes['visibility']) ?? $fallbackVisibility)
+            : $fallbackVisibility;
 
         return [
             'status' => $status,
+            'visibility' => $visibility,
             'downloads_allowed' => (bool) $attributes['downloads_allowed'],
             'rights_basis' => $attributes['rights_basis'] ?? null,
             'rights_holder' => $attributes['rights_holder'] ?? null,

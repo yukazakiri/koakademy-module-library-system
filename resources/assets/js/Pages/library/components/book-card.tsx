@@ -3,7 +3,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { favorite, read, show, unfavorite } from "@/routes/library/books";
 import { Link, router } from "@inertiajs/react";
-import { BookOpen, Bookmark, Heart, LibraryBig } from "lucide-react";
+import { BookOpen, Bookmark, Heart, LibraryBig, Lock } from "lucide-react";
 import { useEffect, useState } from "react";
 import { BookCover } from "./book-cover";
 
@@ -17,6 +17,8 @@ export interface LibraryBookCardData {
     description: string;
     cover_image_url: string | null;
     available_online: boolean;
+    visibility?: "public" | "authenticated" | "members_only" | null;
+    requires_account_to_read?: boolean;
     downloads_allowed?: boolean;
     file_size_bytes?: number | null;
     is_favorite: boolean;
@@ -26,7 +28,7 @@ interface BookCardProps {
     book: LibraryBookCardData;
     priority?: boolean;
     isAuthenticated?: boolean;
-    onRequireAuth?: (book: LibraryBookCardData) => void;
+    onRequireAuth?: (book: LibraryBookCardData, reason?: "favorite" | "read") => void;
 }
 
 export function BookCard({ book, priority = false, isAuthenticated = true, onRequireAuth }: BookCardProps) {
@@ -35,9 +37,11 @@ export function BookCard({ book, priority = false, isAuthenticated = true, onReq
 
     useEffect(() => setIsFavorite(book.is_favorite), [book.is_favorite]);
 
+    const readRequiresAuth = Boolean(book.available_online && book.requires_account_to_read && !isAuthenticated);
+
     const toggleFavorite = () => {
         if (!isAuthenticated) {
-            onRequireAuth?.(book);
+            onRequireAuth?.(book, "favorite");
             return;
         }
 
@@ -62,15 +66,27 @@ export function BookCard({ book, priority = false, isAuthenticated = true, onReq
                 <BookCover title={book.title} author={book.author} coverUrl={book.cover_image_url} priority={priority} />
                 <div className="pointer-events-none absolute top-2.5 right-2.5 z-10 flex items-center gap-1.5">
                     {book.available_online ? (
-                        <Badge
-                            variant="success-light"
-                            radius="full"
-                            size="xs"
-                            className="border border-emerald-400/35 bg-emerald-950/85 font-semibold tracking-wide text-emerald-100 shadow-xs backdrop-blur-md"
-                        >
-                            <BookOpen className="mr-1 size-3 text-emerald-300" />
-                            Read Online
-                        </Badge>
+                        readRequiresAuth ? (
+                            <Badge
+                                variant="invert-light"
+                                radius="full"
+                                size="xs"
+                                className="border border-amber-400/40 bg-slate-950/85 font-semibold tracking-wide text-amber-100 shadow-xs backdrop-blur-md"
+                            >
+                                <Lock className="mr-1 size-3 text-amber-300" />
+                                Sign in to Read
+                            </Badge>
+                        ) : (
+                            <Badge
+                                variant="success-light"
+                                radius="full"
+                                size="xs"
+                                className="border border-emerald-400/35 bg-emerald-950/85 font-semibold tracking-wide text-emerald-100 shadow-xs backdrop-blur-md"
+                            >
+                                <BookOpen className="mr-1 size-3 text-emerald-300" />
+                                Read Online
+                            </Badge>
+                        )
                     ) : (
                         <Badge
                             variant="invert-light"
@@ -113,17 +129,30 @@ export function BookCard({ book, priority = false, isAuthenticated = true, onReq
                 </div>
 
                 <div className="mt-auto flex items-center gap-1.5 pt-1 sm:gap-2 sm:pt-2">
-                    <Link
-                        href={book.available_online ? read.url(book.id) : show.url(book.id)}
-                        prefetch
-                        className={cn(
-                            buttonVariants({ variant: book.available_online ? "default" : "outline", size: "sm" }),
-                            "h-9 flex-1 gap-1.5 rounded-lg px-2.5 text-xs font-semibold shadow-2xs transition-transform active:scale-[0.96]",
-                        )}
-                    >
-                        {book.available_online ? <BookOpen className="size-3.5 shrink-0" /> : <Bookmark className="size-3.5 shrink-0" />}
-                        <span className="truncate">{book.available_online ? "Read Now" : "Details"}</span>
-                    </Link>
+                    {readRequiresAuth ? (
+                        <Button
+                            type="button"
+                            variant="default"
+                            size="sm"
+                            onClick={() => onRequireAuth?.(book, "read")}
+                            className="h-9 flex-1 gap-1.5 rounded-lg px-2.5 text-xs font-semibold shadow-2xs transition-transform active:scale-[0.96]"
+                        >
+                            <Lock className="size-3.5 shrink-0" />
+                            <span className="truncate">Sign in to Read</span>
+                        </Button>
+                    ) : (
+                        <Link
+                            href={book.available_online ? read.url(book.id) : show.url(book.id)}
+                            prefetch
+                            className={cn(
+                                buttonVariants({ variant: book.available_online ? "default" : "outline", size: "sm" }),
+                                "h-9 flex-1 gap-1.5 rounded-lg px-2.5 text-xs font-semibold shadow-2xs transition-transform active:scale-[0.96]",
+                            )}
+                        >
+                            {book.available_online ? <BookOpen className="size-3.5 shrink-0" /> : <Bookmark className="size-3.5 shrink-0" />}
+                            <span className="truncate">{book.available_online ? "Read Now" : "Details"}</span>
+                        </Link>
+                    )}
 
                     <Button
                         type="button"

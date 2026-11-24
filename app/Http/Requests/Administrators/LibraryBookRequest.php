@@ -8,6 +8,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\LibrarySystem\Enums\BookFormat;
+use Modules\LibrarySystem\Enums\DigitalEditionVisibility;
 use Modules\LibrarySystem\Enums\DigitalRightsBasis;
 
 final class LibraryBookRequest extends FormRequest
@@ -53,6 +54,7 @@ final class LibraryBookRequest extends FormRequest
                 'mimetypes:application/pdf,application/x-pdf',
                 'max:'.config('librarysystem.ebooks.max_upload_kilobytes', 92160),
             ],
+            'digital_visibility' => ['nullable', Rule::enum(DigitalEditionVisibility::class)],
             'digital_rights_basis' => ['nullable', Rule::enum(DigitalRightsBasis::class)],
             'digital_rights_holder' => ['nullable', 'string', 'max:255'],
             'digital_license_url' => ['nullable', 'url:http,https', 'max:2048'],

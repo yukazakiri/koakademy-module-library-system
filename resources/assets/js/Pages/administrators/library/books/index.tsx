@@ -103,6 +103,7 @@ export default function LibraryBooksIndex({ user, books, stats, filters, options
     const digitalOptions = options.digital ?? [
         { value: "all", label: "All formats" },
         { value: "published", label: "Published eBooks" },
+        { value: "account_required", label: "Account-required eBooks" },
         { value: "downloadable", label: "Downloadable eBooks" },
         { value: "draft", label: "Draft eBooks" },
         { value: "ebook_only", label: "eBook-only titles" },
