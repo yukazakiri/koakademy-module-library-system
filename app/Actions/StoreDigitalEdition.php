@@ -9,14 +9,20 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Modules\LibrarySystem\Enums\BookFormat;
 use Modules\LibrarySystem\Enums\DigitalEditionStatus;
 use Modules\LibrarySystem\Models\Book;
 use Modules\LibrarySystem\Models\DigitalEdition;
+use Modules\LibrarySystem\Services\DigitalEditionInspectionService;
 use RuntimeException;
 use Throwable;
 
 final class StoreDigitalEdition
 {
+    public function __construct(
+        private readonly DigitalEditionInspectionService $inspector = new DigitalEditionInspectionService,
+    ) {}
+
     /**
      * @param  array<string, mixed>  $attributes
      */
@@ -24,6 +30,13 @@ final class StoreDigitalEdition
     {
         $attributes['status'] = DigitalEditionStatus::Draft->value;
         $attributes['downloads_allowed'] = false;
+
+        $inspection = $this->inspector->inspectFile(
+            $file->getRealPath(),
+            $file->getClientOriginalName()
+        );
+        $rightsScan = $inspection['rights_scan'];
+        $riskLevel = (string) ($rightsScan['risk_level'] ?? 'neutral');
 
         $disk = (string) config('librarysystem.ebooks.disk', 'library');
         $path = sprintf(
@@ -55,9 +68,17 @@ final class StoreDigitalEdition
                 $actor,
                 $disk,
                 $path,
-                $sha256
+                $sha256,
+                $rightsScan,
+                $riskLevel
             ): array {
-                Book::query()->whereKey($book->id)->lockForUpdate()->firstOrFail();
+                $lockedBook = Book::query()->whereKey($book->id)->lockForUpdate()->firstOrFail();
+
+                if ($lockedBook->resolvedFormat() === BookFormat::Physical) {
+                    $lockedBook->forceFill([
+                        'format' => $lockedBook->total_copies > 0 ? BookFormat::Hybrid : BookFormat::Ebook,
+                    ])->save();
+                }
 
                 $edition = DigitalEdition::query()
                     ->where('book_id', $book->id)
@@ -77,6 +98,8 @@ final class StoreDigitalEdition
                     'mime_type' => 'application/pdf',
                     'size_bytes' => $file->getSize(),
                     'sha256' => $sha256,
+                    'rights_scan' => $rightsScan,
+                    'rights_risk_level' => $riskLevel,
                     'uploaded_by' => $actor->id,
                     'uploaded_at' => now(),
                 ]);
@@ -89,6 +112,8 @@ final class StoreDigitalEdition
                         'digital_edition_id' => $edition->id,
                         'status' => $edition->status->value,
                         'downloads_allowed' => $edition->downloads_allowed,
+                        'rights_risk_level' => $riskLevel,
+                        'piracy_blocked' => (bool) ($rightsScan['piracy_blocked'] ?? false),
                         'replacement' => $previousObject !== null,
                     ])
                     ->log($previousObject === null ? 'Uploaded a digital edition' : 'Replaced a digital edition');

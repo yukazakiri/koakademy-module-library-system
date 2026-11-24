@@ -163,6 +163,16 @@ export default function LibraryIndex({ user, stats, recent }: Props) {
                                     Open Public Library Portal
                                 </Link>
                                 <Link
+                                    href={createBook.url({ query: { format: "ebook" } })}
+                                    className={cn(
+                                        buttonVariants({ variant: "secondary", size: "default" }),
+                                        "gap-2 rounded-lg text-xs font-semibold shadow-2xs",
+                                    )}
+                                >
+                                    <FileText className="size-3.5" />
+                                    Upload eBook
+                                </Link>
+                                <Link
                                     href={createBook.url()}
                                     className={cn(buttonVariants({ size: "default" }), "gap-2 rounded-lg text-xs font-semibold shadow-xs")}
                                 >
@@ -172,7 +182,7 @@ export default function LibraryIndex({ user, stats, recent }: Props) {
                                 <Link
                                     href={createResearchPaper.url()}
                                     className={cn(
-                                        buttonVariants({ variant: "secondary", size: "default" }),
+                                        buttonVariants({ variant: "outline", size: "default" }),
                                         "gap-2 rounded-lg text-xs font-semibold",
                                     )}
                                 >

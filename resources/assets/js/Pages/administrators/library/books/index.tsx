@@ -105,6 +105,7 @@ export default function LibraryBooksIndex({ user, books, stats, filters, options
         { value: "published", label: "Published eBooks" },
         { value: "downloadable", label: "Downloadable eBooks" },
         { value: "draft", label: "Draft eBooks" },
+        { value: "ebook_only", label: "eBook-only titles" },
         { value: "none", label: "Print only" },
     ];
 
@@ -172,6 +173,13 @@ export default function LibraryBooksIndex({ user, books, stats, filters, options
                             <Link href={publicLibraryIndex.url()} className={buttonVariants({ variant: "outline", className: "gap-2" })}>
                                 <ExternalLink className="h-4 w-4" />
                                 Public Library
+                            </Link>
+                            <Link
+                                href={createBook.url({ query: { format: "ebook" } })}
+                                className={buttonVariants({ variant: "secondary", className: "gap-2" })}
+                            >
+                                <FileText className="h-4 w-4" />
+                                Upload eBook
                             </Link>
                             <Link href={createBook.url()} className={buttonVariants({ className: "gap-2" })}>
                                 <Plus className="h-4 w-4" />

@@ -215,6 +215,7 @@ final class AdministratorLibraryBorrowRecordController extends Controller
     {
         return [
             'books' => Book::query()
+                ->where('format', '!=', \Modules\LibrarySystem\Enums\BookFormat::Ebook->value)
                 ->orderBy('title')
                 ->get()
                 ->map(fn (Book $book): array => [

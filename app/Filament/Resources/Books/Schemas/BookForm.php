@@ -12,6 +12,7 @@ use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Modules\LibrarySystem\Enums\BookFormat;
 use Modules\LibrarySystem\Models\Book;
 
 final class BookForm
@@ -44,6 +45,19 @@ final class BookForm
     private static function getBasicInfoSection(): array
     {
         return [
+            Select::make('format')
+                ->label('Book Format')
+                ->options([
+                    BookFormat::Physical->value => BookFormat::Physical->label(),
+                    BookFormat::Ebook->value => BookFormat::Ebook->label(),
+                    BookFormat::Hybrid->value => BookFormat::Hybrid->label(),
+                ])
+                ->default(BookFormat::Physical->value)
+                ->required()
+                ->live()
+                ->helperText('Choose eBook (PDF) for digital-only titles without physical shelf inventory. Use "Manage eBook PDF" to upload and screen the PDF file.')
+                ->columnSpanFull(),
+
             TextInput::make('title')
                 ->required()
                 ->maxLength(255)
@@ -55,11 +69,13 @@ final class BookForm
 
             TextInput::make('call_number')
                 ->label('Call Number')
-                ->maxLength(255),
+                ->maxLength(255)
+                ->hidden(fn (callable $get): bool => $get('format') === BookFormat::Ebook->value),
 
             TextInput::make('accession_number')
                 ->label('Accession Number')
-                ->maxLength(255),
+                ->maxLength(255)
+                ->hidden(fn (callable $get): bool => $get('format') === BookFormat::Ebook->value),
 
             Select::make('author_id')
                 ->label('Author')
@@ -117,12 +133,14 @@ final class BookForm
                     'maintenance' => 'Maintenance',
                 ])
                 ->default('available')
-                ->required(),
+                ->required(fn (callable $get): bool => $get('format') !== BookFormat::Ebook->value)
+                ->hidden(fn (callable $get): bool => $get('format') === BookFormat::Ebook->value),
 
             TextInput::make('total_copies')
                 ->label('Total Copies')
                 ->numeric()
-                ->required()
+                ->required(fn (callable $get): bool => $get('format') !== BookFormat::Ebook->value)
+                ->hidden(fn (callable $get): bool => $get('format') === BookFormat::Ebook->value)
                 ->default(1)
                 ->minValue(1)
                 ->live(onBlur: true)
@@ -139,6 +157,7 @@ final class BookForm
                 ->label('Available Copies')
                 ->numeric()
                 ->minValue(0)
+                ->hidden(fn (callable $get): bool => $get('format') === BookFormat::Ebook->value)
                 ->placeholder(fn (callable $get): ?string => $get('total_copies') ? (string) $get('total_copies') : '1')
                 ->helperText('Defaults to total copies if left blank.'),
         ];
@@ -171,6 +190,7 @@ final class BookForm
             TextInput::make('location')
                 ->label('Shelf Location')
                 ->maxLength(255)
+                ->hidden(fn (callable $get): bool => $get('format') === BookFormat::Ebook->value)
                 ->placeholder('e.g., Main Library · A-12'),
 
             TextInput::make('cover_image')

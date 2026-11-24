@@ -27,8 +27,11 @@ it('keeps public eBook reading routes separate from authenticated download route
         ->toContain("Route::get('/books/{book}/content', [DigitalLibraryController::class, 'content'])")
         ->toContain("Route::middleware(['auth', EnsureLibraryModuleEnabled::class])")
         ->toContain("Route::get('/books/{book}/download', [DigitalLibraryController::class, 'download'])")
-        ->toContain("Route::get('/books/{book}/authenticate', [DigitalLibraryController::class, 'authenticate'])");
+        ->toContain("Route::get('/books/{book}/authenticate', [DigitalLibraryController::class, 'authenticate'])")
+        ->toContain("Route::post('/library/books/inspect-pdf', [AdministratorLibraryBookController::class, 'inspectPdf'])");
 
+    expect(class_exists(\Modules\LibrarySystem\Enums\BookFormat::class))->toBeTrue();
     expect(class_exists(\Modules\LibrarySystem\Services\DigitalEditionDeliveryService::class))->toBeTrue();
     expect(class_exists(\Modules\LibrarySystem\Services\DigitalCatalogService::class))->toBeTrue();
+    expect(class_exists(\Modules\LibrarySystem\Services\DigitalEditionInspectionService::class))->toBeTrue();
 });

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Modules\LibrarySystem\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -14,16 +15,20 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
+use Modules\LibrarySystem\Actions\StoreDigitalEdition;
+use Modules\LibrarySystem\Enums\BookFormat;
 use Modules\LibrarySystem\Enums\DigitalEditionStatus;
 use Modules\LibrarySystem\Enums\DigitalRightsBasis;
 use Modules\LibrarySystem\Http\Requests\Administrators\BulkDeleteBookRequest;
 use Modules\LibrarySystem\Http\Requests\Administrators\BulkForceDeleteBookRequest;
+use Modules\LibrarySystem\Http\Requests\Administrators\InspectDigitalEditionRequest;
 use Modules\LibrarySystem\Http\Requests\Administrators\LibraryBookIdentifierSuggestionsRequest;
 use Modules\LibrarySystem\Http\Requests\Administrators\LibraryBookRequest;
 use Modules\LibrarySystem\Models\Author;
 use Modules\LibrarySystem\Models\Book;
 use Modules\LibrarySystem\Models\Category;
 use Modules\LibrarySystem\Models\DigitalEdition;
+use Modules\LibrarySystem\Services\DigitalEditionInspectionService;
 use Throwable;
 
 final class AdministratorLibraryBookController extends Controller
@@ -41,7 +46,7 @@ final class AdministratorLibraryBookController extends Controller
         $sort = in_array($sort, $allowedSorts, true) ? $sort : 'created_at';
         $direction = in_array($direction, ['asc', 'desc'], true) ? $direction : 'desc';
         $perPage = in_array($perPage, [10, 20, 50, 100], true) ? $perPage : 20;
-        $digital = is_string($digital) && in_array($digital, ['published', 'downloadable', 'draft', 'none'], true)
+        $digital = is_string($digital) && in_array($digital, ['published', 'downloadable', 'draft', 'none', 'ebook_only'], true)
             ? $digital
             : null;
 
@@ -63,6 +68,7 @@ final class AdministratorLibraryBookController extends Controller
             ->when($digital === 'published', fn ($query) => $query->whereHas('digitalEdition', fn ($digitalQuery) => $digitalQuery->accessible()))
             ->when($digital === 'downloadable', fn ($query) => $query->whereHas('digitalEdition', fn ($digitalQuery) => $digitalQuery->accessible()->where('downloads_allowed', true)))
             ->when($digital === 'draft', fn ($query) => $query->whereHas('digitalEdition', fn ($digitalQuery) => $digitalQuery->where('status', DigitalEditionStatus::Draft->value)))
+            ->when($digital === 'ebook_only', fn ($query) => $query->where('format', BookFormat::Ebook->value))
             ->when($digital === 'none', fn ($query) => $query->whereDoesntHave('digitalEdition'));
 
         $booksQuery->orderBy($sort, $direction)
@@ -74,6 +80,7 @@ final class AdministratorLibraryBookController extends Controller
             ->through(fn (Book $book): array => [
                 'id' => $book->id,
                 'title' => $book->title,
+                'format' => $book->resolvedFormat()->value,
                 'isbn' => $book->isbn,
                 'call_number' => $book->call_number,
                 'accession_number' => $book->accession_number,
@@ -97,6 +104,8 @@ final class AdministratorLibraryBookController extends Controller
                     'is_accessible' => $book->digitalEdition->isAccessible(),
                     'downloads_allowed' => $book->digitalEdition->downloads_allowed,
                     'size_bytes' => $book->digitalEdition->size_bytes,
+                    'rights_risk_level' => $book->digitalEdition->rights_risk_level,
+                    'is_piracy_blocked' => $book->digitalEdition->isPiracyBlocked(),
                 ] : null,
                 'updated_at' => format_timestamp($book->updated_at),
                 'created_at' => format_timestamp($book->created_at),
@@ -134,6 +143,7 @@ final class AdministratorLibraryBookController extends Controller
                     ['value' => 'published', 'label' => 'Published eBooks'],
                     ['value' => 'downloadable', 'label' => 'Downloadable eBooks'],
                     ['value' => 'draft', 'label' => 'Draft eBooks'],
+                    ['value' => 'ebook_only', 'label' => 'eBook-only titles'],
                     ['value' => 'none', 'label' => 'Print only'],
                 ],
                 'per_page' => [
@@ -147,13 +157,34 @@ final class AdministratorLibraryBookController extends Controller
         ]);
     }
 
-    public function create(): Response
+    public function create(Request $request): Response
     {
+        $requestedFormat = BookFormat::tryFrom((string) $request->query('format', BookFormat::Physical->value))
+            ?? BookFormat::Physical;
+
         return Inertia::render('administrators/library/books/edit', [
             'user' => $this->getUserProps(),
             'book' => null,
+            'initial_format' => $requestedFormat->value,
+            'can_manage_digital_edition' => $request->user()?->can('manageDigitalEdition', new Book) ?? false,
             'options' => $this->getBookOptions(),
+            'flash' => session('flash'),
         ]);
+    }
+
+    public function inspectPdf(
+        InspectDigitalEditionRequest $request,
+        DigitalEditionInspectionService $inspector
+    ): JsonResponse {
+        $file = $request->file('pdf');
+        abort_unless($file instanceof UploadedFile, 422, 'Choose a PDF file to inspect.');
+
+        $result = $inspector->inspectFile(
+            $file->getRealPath(),
+            $file->getClientOriginalName()
+        );
+
+        return response()->json($result);
     }
 
     public function fieldValues(LibraryBookIdentifierSuggestionsRequest $request): JsonResponse
@@ -181,18 +212,54 @@ final class AdministratorLibraryBookController extends Controller
         ]);
     }
 
-    public function store(LibraryBookRequest $request): RedirectResponse
+    public function store(LibraryBookRequest $request, StoreDigitalEdition $storeDigitalEdition): RedirectResponse
     {
-        $validated = $this->normalizeBookData($request->validated());
+        $rawValidated = $request->validated();
+        $validated = $this->normalizeBookData($rawValidated);
 
         $coverImage = $request->file('cover_image_upload');
         if ($coverImage instanceof UploadedFile) {
             $validated['cover_image_path'] = $this->storeCoverImage($coverImage);
         }
 
-        unset($validated['cover_image_upload']);
+        $digitalPdf = $request->file('digital_pdf');
+        $digitalAttributes = [
+            'rights_basis' => $rawValidated['digital_rights_basis'] ?? null,
+            'rights_holder' => $rawValidated['digital_rights_holder'] ?? null,
+            'license_url' => $rawValidated['digital_license_url'] ?? null,
+            'rights_notes' => $rawValidated['digital_rights_notes'] ?? null,
+            'rights_expires_at' => $rawValidated['digital_rights_expires_at'] ?? null,
+        ];
 
-        Book::create($validated);
+        unset(
+            $validated['cover_image_upload'],
+            $validated['digital_pdf'],
+            $validated['digital_rights_basis'],
+            $validated['digital_rights_holder'],
+            $validated['digital_license_url'],
+            $validated['digital_rights_notes'],
+            $validated['digital_rights_expires_at'],
+        );
+
+        $book = Book::create($validated);
+        $actor = $request->user();
+
+        if ($digitalPdf instanceof UploadedFile
+            && $actor instanceof User
+            && $actor->can('manageDigitalEdition', $book)) {
+            $edition = $storeDigitalEdition->execute($book, $digitalPdf, $digitalAttributes, $actor);
+
+            $flashMessage = $edition->isPiracyBlocked()
+                ? 'Book saved, but publishing is blocked because the uploaded PDF matched a known piracy source. Replace or remove the file below.'
+                : 'Book and eBook PDF saved as a draft. Review the copyright screening and rights settings below before publishing.';
+
+            return redirect()
+                ->to(route('administrators.library.books.edit', $book).'#digital-edition')
+                ->with('flash', [
+                    'type' => $edition->isPiracyBlocked() ? 'error' : 'success',
+                    'message' => $flashMessage,
+                ]);
+        }
 
         return redirect()
             ->route('administrators.library.books.index')
@@ -211,6 +278,7 @@ final class AdministratorLibraryBookController extends Controller
             'user' => $this->getUserProps(),
             'book' => [
                 'id' => $book->id,
+                'format' => $book->resolvedFormat()->value,
                 'title' => $book->title,
                 'isbn' => $book->isbn,
                 'call_number' => $book->call_number,
@@ -239,26 +307,41 @@ final class AdministratorLibraryBookController extends Controller
                     'rights_holder' => $edition->rights_holder,
                     'license_url' => $edition->license_url,
                     'rights_notes' => $edition->rights_notes,
+                    'rights_scan' => $edition->rights_scan,
+                    'rights_risk_level' => $edition->rights_risk_level,
+                    'is_piracy_blocked' => $edition->isPiracyBlocked(),
                     'rights_expires_at' => $edition->rights_expires_at?->format('Y-m-d'),
                     'uploaded_at' => $edition->uploaded_at?->toIso8601String(),
                     'published_at' => $edition->published_at?->toIso8601String(),
                 ] : null,
                 'can_manage_digital_edition' => request()->user()?->can('manageDigitalEdition', $book) ?? false,
             ],
+            'initial_format' => $book->resolvedFormat()->value,
+            'can_manage_digital_edition' => request()->user()?->can('manageDigitalEdition', $book) ?? false,
             'options' => $this->getBookOptions(),
+            'flash' => session('flash'),
         ]);
     }
 
     public function update(LibraryBookRequest $request, Book $book): RedirectResponse
     {
-        $validated = $this->normalizeBookData($request->validated());
+        $rawValidated = $request->validated();
+        $validated = $this->normalizeBookData($rawValidated);
 
         $coverImage = $request->file('cover_image_upload');
         if ($coverImage instanceof UploadedFile) {
             $validated['cover_image_path'] = $this->storeCoverImage($coverImage, $book->cover_image_path);
         }
 
-        unset($validated['cover_image_upload']);
+        unset(
+            $validated['cover_image_upload'],
+            $validated['digital_pdf'],
+            $validated['digital_rights_basis'],
+            $validated['digital_rights_holder'],
+            $validated['digital_license_url'],
+            $validated['digital_rights_notes'],
+            $validated['digital_rights_expires_at'],
+        );
 
         $book->update($validated);
 
@@ -379,10 +462,30 @@ final class AdministratorLibraryBookController extends Controller
 
     private function normalizeBookData(array $validated): array
     {
-        $totalCopies = $validated['total_copies'];
-        $availableCopies = $validated['available_copies'] ?? $totalCopies;
+        $format = BookFormat::tryFrom((string) ($validated['format'] ?? BookFormat::Physical->value))
+            ?? BookFormat::Physical;
 
-        $validated['available_copies'] = min($availableCopies, $totalCopies);
+        $validated['format'] = $format->value;
+
+        if (! $format->hasPhysicalInventory()) {
+            $validated['total_copies'] = 0;
+            $validated['available_copies'] = 0;
+            $validated['status'] = 'available';
+            $validated['location'] = null;
+            $validated['call_number'] = $validated['call_number'] ?? null;
+            $validated['accession_number'] = $validated['accession_number'] ?? null;
+
+            return $validated;
+        }
+
+        $totalCopies = max(1, (int) ($validated['total_copies'] ?? 1));
+        $availableCopies = isset($validated['available_copies']) && $validated['available_copies'] !== null
+            ? (int) $validated['available_copies']
+            : $totalCopies;
+
+        $validated['total_copies'] = $totalCopies;
+        $validated['available_copies'] = min(max(0, $availableCopies), $totalCopies);
+        $validated['status'] = $validated['status'] ?? 'available';
 
         return $validated;
     }
@@ -412,6 +515,12 @@ final class AdministratorLibraryBookController extends Controller
     private function getBookOptions(): array
     {
         return [
+            'formats' => collect(BookFormat::cases())
+                ->map(fn (BookFormat $format): array => [
+                    'value' => $format->value,
+                    'label' => $format->label(),
+                ])
+                ->all(),
             'authors' => Author::query()
                 ->select(['id', 'name'])
                 ->orderBy('name')

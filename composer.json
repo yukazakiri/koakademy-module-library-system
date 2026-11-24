@@ -25,7 +25,8 @@
         "nwidart/laravel-modules": "^13.0",
         "spatie/laravel-tags": "^4.10",
         "coolsam/modules": "^5.0",
-        "inertiajs/inertia-laravel": "^3.0"
+        "inertiajs/inertia-laravel": "^3.0",
+        "smalot/pdfparser": "^2.12"
     },
     "require-dev": {
         "pestphp/pest": "^5.0"

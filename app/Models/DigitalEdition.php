@@ -29,6 +29,8 @@ final class DigitalEdition extends Model
         'rights_holder',
         'license_url',
         'rights_notes',
+        'rights_scan',
+        'rights_risk_level',
         'rights_expires_at',
         'uploaded_by',
         'uploaded_at',
@@ -64,12 +66,28 @@ final class DigitalEdition extends Model
         return $this->belongsTo(User::class, 'rights_confirmed_by');
     }
 
+    public function isPiracyBlocked(): bool
+    {
+        return $this->rights_risk_level === 'critical'
+            || (bool) ($this->rights_scan['piracy_blocked'] ?? false);
+    }
+
+    public function hasHighCopyrightRisk(): bool
+    {
+        return $this->rights_risk_level === 'high';
+    }
+
     public function scopeAccessible(Builder $query): Builder
     {
         return $query
             ->where('status', DigitalEditionStatus::Published->value)
             ->whereNotNull('rights_basis')
             ->whereNotNull('rights_confirmed_at')
+            ->where(function (Builder $query): void {
+                $query
+                    ->whereNull('rights_risk_level')
+                    ->orWhere('rights_risk_level', '!=', 'critical');
+            })
             ->where(function (Builder $query): void {
                 $query
                     ->whereNull('rights_expires_at')
@@ -80,6 +98,7 @@ final class DigitalEdition extends Model
     public function isAccessible(): bool
     {
         return $this->status === DigitalEditionStatus::Published
+            && ! $this->isPiracyBlocked()
             && $this->rights_basis instanceof DigitalRightsBasis
             && $this->rights_confirmed_at !== null
             && ($this->rights_expires_at === null || $this->rights_expires_at->isFuture());
@@ -92,6 +111,7 @@ final class DigitalEdition extends Model
             'rights_basis' => DigitalRightsBasis::class,
             'downloads_allowed' => 'boolean',
             'size_bytes' => 'integer',
+            'rights_scan' => 'array',
             'rights_expires_at' => 'datetime',
             'uploaded_at' => 'datetime',
             'published_at' => 'datetime',

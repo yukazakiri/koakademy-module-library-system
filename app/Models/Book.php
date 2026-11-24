@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\LibrarySystem\Database\Factories\BookFactory;
+use Modules\LibrarySystem\Enums\BookFormat;
 
 final class Book extends Model
 {
@@ -36,6 +37,11 @@ final class Book extends Model
         'available_copies',
         'location',
         'status',
+        'format',
+    ];
+
+    protected $attributes = [
+        'format' => 'physical',
     ];
 
     protected $casts = [
@@ -43,6 +49,7 @@ final class Book extends Model
         'pages' => 'integer',
         'total_copies' => 'integer',
         'available_copies' => 'integer',
+        'format' => BookFormat::class,
     ];
 
     public function author(): BelongsTo
@@ -75,9 +82,24 @@ final class Book extends Model
         return $this->hasMany(LibraryBookmark::class);
     }
 
+    public function resolvedFormat(): BookFormat
+    {
+        return $this->format instanceof BookFormat ? $this->format : BookFormat::Physical;
+    }
+
+    public function isEbookOnly(): bool
+    {
+        return $this->resolvedFormat() === BookFormat::Ebook;
+    }
+
+    public function hasPhysicalInventory(): bool
+    {
+        return $this->resolvedFormat()->hasPhysicalInventory();
+    }
+
     public function isAvailable(): bool
     {
-        return $this->available_copies > 0 && $this->status === 'available';
+        return $this->hasPhysicalInventory() && $this->available_copies > 0 && $this->status === 'available';
     }
 
     public function getStatusBadgeColorAttribute(): string

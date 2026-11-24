@@ -60,6 +60,9 @@ Route::middleware(['auth', 'administrators.only'])
         Route::get('/library/books', [AdministratorLibraryBookController::class, 'index'])->name('library.books.index');
         Route::get('/library/books/field-values', [AdministratorLibraryBookController::class, 'fieldValues'])
             ->name('library.books.field-values');
+        Route::post('/library/books/inspect-pdf', [AdministratorLibraryBookController::class, 'inspectPdf'])
+            ->middleware('throttle:30,1')
+            ->name('library.books.inspect-pdf');
         Route::get('/library/books/create', [AdministratorLibraryBookController::class, 'create'])->name('library.books.create');
         Route::post('/library/books', [AdministratorLibraryBookController::class, 'store'])->name('library.books.store');
         Route::delete('/library/books/bulk', [AdministratorLibraryBookController::class, 'bulkDestroy'])

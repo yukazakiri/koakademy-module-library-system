@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\LibrarySystem\Filament\Resources\Books\Tables;
 
+use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
@@ -18,6 +19,7 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Filters\TrashedFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Modules\LibrarySystem\Enums\BookFormat;
 use Modules\LibrarySystem\Models\Book;
 
 final class BooksTable
@@ -29,11 +31,10 @@ final class BooksTable
             ->columns([
                 ImageColumn::make('cover_image')
                     ->label('Cover')
-                    ->disk('public')
                     ->square()
-                    ->size(50)
-                    ->state(fn (Book $record): ?string => $record->cover_image_path ?: $record->cover_image)
-                    ->defaultImageUrl('/images/no-book-cover.png'),
+                    ->size(44)
+                    ->state(fn (Book $record): ?string => $record->cover_image_url)
+                    ->defaultImageUrl('data:image/svg+xml;utf8,'.rawurlencode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 80"><rect width="64" height="80" rx="8" fill="#f1f5f9"/><rect x="12" y="14" width="40" height="52" rx="4" fill="#cbd5e1"/><path d="M22 28h20M22 36h14" stroke="#64748b" stroke-width="3" stroke-linecap="round"/></svg>')),
 
                 TextColumn::make('title')
                     ->label('Title')
@@ -41,6 +42,19 @@ final class BooksTable
                     ->sortable()
                     ->weight('bold')
                     ->limit(50),
+
+                TextColumn::make('format')
+                    ->label('Format')
+                    ->badge()
+                    ->formatStateUsing(fn (mixed $state): string => $state instanceof BookFormat
+                        ? $state->shortLabel()
+                        : (BookFormat::tryFrom((string) $state)?->shortLabel() ?? 'Physical'))
+                    ->color(fn (mixed $state): string => match ($state instanceof BookFormat ? $state->value : (string) $state) {
+                        BookFormat::Ebook->value => 'info',
+                        BookFormat::Hybrid->value => 'primary',
+                        default => 'gray',
+                    })
+                    ->toggleable(),
 
                 TextColumn::make('isbn')
                     ->label('ISBN')
@@ -102,7 +116,11 @@ final class BooksTable
                         $edition = $record->digitalEdition;
 
                         if ($edition === null) {
-                            return 'Print only';
+                            return $record->isEbookOnly() ? 'PDF not uploaded' : 'Print only';
+                        }
+
+                        if ($edition->isPiracyBlocked()) {
+                            return 'Blocked · Piracy';
                         }
 
                         if ($edition->isAccessible()) {
@@ -115,7 +133,11 @@ final class BooksTable
                         $edition = $record->digitalEdition;
 
                         if ($edition === null) {
-                            return 'gray';
+                            return $record->isEbookOnly() ? 'warning' : 'gray';
+                        }
+
+                        if ($edition->isPiracyBlocked()) {
+                            return 'danger';
                         }
 
                         if ($edition->isAccessible()) {
@@ -147,6 +169,14 @@ final class BooksTable
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
+                SelectFilter::make('format')
+                    ->label('Format')
+                    ->options([
+                        BookFormat::Physical->value => BookFormat::Physical->label(),
+                        BookFormat::Ebook->value => BookFormat::Ebook->label(),
+                        BookFormat::Hybrid->value => BookFormat::Hybrid->label(),
+                    ]),
+
                 SelectFilter::make('author_id')
                     ->label('Author')
                     ->relationship('author', 'name')
@@ -184,6 +214,12 @@ final class BooksTable
                 TrashedFilter::make(),
             ])
             ->recordActions([
+                Action::make('manage_ebook')
+                    ->label('Manage eBook PDF')
+                    ->icon('heroicon-o-document-arrow-up')
+                    ->color('info')
+                    ->url(fn (Book $record): string => route('administrators.library.books.edit', $record).'#digital-edition')
+                    ->visible(fn (Book $record): bool => auth()->user()?->can('manageDigitalEdition', $record) ?? false),
                 EditAction::make(),
                 ViewAction::make(),
             ])

@@ -11,7 +11,7 @@ import {
 import { read as readDigitalBook } from "@/routes/library/books";
 import { Link } from "@inertiajs/react";
 import { ColumnDef } from "@tanstack/react-table";
-import { ArrowUpDown, BookOpen, Copy, Download, FileText, MoreHorizontal, Pencil, Trash2, Zap } from "lucide-react";
+import { ArrowUpDown, BookOpen, Copy, Download, FileText, MoreHorizontal, Pencil, ShieldBan, Trash2, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 declare let route: any; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -21,11 +21,14 @@ export type BookDigitalEditionSummary = {
     is_accessible: boolean;
     downloads_allowed: boolean;
     size_bytes: number;
+    rights_risk_level?: string | null;
+    is_piracy_blocked?: boolean;
 };
 
 export type Book = {
     id: number;
     title: string;
+    format?: "physical" | "ebook" | "hybrid";
     isbn: string | null;
     call_number: string | null;
     accession_number: string | null;
@@ -153,11 +156,17 @@ export const columns: ColumnDef<Book>[] = [
     {
         accessorKey: "copies",
         header: "Copies",
-        cell: ({ row }) => (
-            <span className="text-muted-foreground text-sm tabular-nums">
-                {row.original.available_copies}/{row.original.total_copies}
-            </span>
-        ),
+        cell: ({ row }) => {
+            if (row.original.format === "ebook") {
+                return <span className="text-muted-foreground text-xs">Digital eBook</span>;
+            }
+
+            return (
+                <span className="text-muted-foreground text-sm tabular-nums">
+                    {row.original.available_copies}/{row.original.total_copies}
+                </span>
+            );
+        },
     },
     {
         id: "ebook",
@@ -166,7 +175,28 @@ export const columns: ColumnDef<Book>[] = [
             const edition = row.original.digital_edition;
 
             if (!edition) {
+                if (row.original.format === "ebook") {
+                    return (
+                        <Badge className="gap-1 bg-amber-500/12 text-amber-700 hover:bg-amber-500/18 dark:text-amber-300">
+                            <FileText className="size-3" />
+                            PDF pending
+                        </Badge>
+                    );
+                }
+
                 return <span className="text-muted-foreground/70 text-xs">Print only</span>;
+            }
+
+            if (edition.is_piracy_blocked) {
+                return (
+                    <div className="flex flex-col items-start gap-0.5">
+                        <Badge className="gap-1 bg-rose-600 text-white hover:bg-rose-700">
+                            <ShieldBan className="size-3" />
+                            Piracy Blocked
+                        </Badge>
+                        <span className="text-muted-foreground text-[11px] tabular-nums">{formatFileSize(edition.size_bytes)}</span>
+                    </div>
+                );
             }
 
             if (edition.is_accessible) {

@@ -27,7 +27,7 @@ final class AdministratorDigitalEditionController extends Controller
         $user = $request->user();
         abort_unless($user instanceof User, 401);
 
-        $storeDigitalEdition->execute(
+        $edition = $storeDigitalEdition->execute(
             $book,
             $request->file('pdf'),
             $request->safe()->except(['pdf']),
@@ -35,8 +35,10 @@ final class AdministratorDigitalEditionController extends Controller
         );
 
         return back()->with('flash', [
-            'type' => 'success',
-            'message' => 'Digital edition uploaded as a draft. Review and publish it separately.',
+            'type' => $edition->isPiracyBlocked() ? 'error' : 'success',
+            'message' => $edition->isPiracyBlocked()
+                ? 'Digital edition saved as draft, but publishing is blocked because a known piracy source watermark was detected.'
+                : 'Digital edition uploaded as a draft. Review the copyright screening and publish it separately.',
         ]);
     }
 
@@ -91,10 +93,16 @@ final class AdministratorDigitalEditionController extends Controller
             activity('library')
                 ->causedBy(request()->user())
                 ->performedOn($book)
-                ->withProperties(['digital_edition_id' => $edition->id])
+                ->withProperties([
+                    'digital_edition_id' => $edition->id,
+                ])
                 ->log('Removed a digital edition');
 
             $edition->delete();
+
+            if ($book->resolvedFormat() === \Modules\LibrarySystem\Enums\BookFormat::Hybrid) {
+                $book->forceFill(['format' => \Modules\LibrarySystem\Enums\BookFormat::Physical])->save();
+            }
 
             return $edition;
         });

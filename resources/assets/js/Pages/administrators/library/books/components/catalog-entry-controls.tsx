@@ -11,7 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import { useHttp } from "@inertiajs/react";
 import { Check, ChevronsUpDown, Loader2, Plus, Tags, UserRound } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
 export interface CatalogOption {
@@ -27,6 +27,7 @@ interface CatalogRelationFieldProps {
     options: CatalogOption[];
     value: string;
     onValueChange: (value: string) => void;
+    onOptionCreated?: (option: CatalogOption) => void;
     error?: string;
 }
 
@@ -42,7 +43,7 @@ interface QuickCreateResponse {
     };
 }
 
-export function CatalogRelationField({ id, kind, options, value, onValueChange, error }: CatalogRelationFieldProps) {
+export function CatalogRelationField({ id, kind, options, value, onValueChange, onOptionCreated, error }: CatalogRelationFieldProps) {
     const [availableOptions, setAvailableOptions] = useState<CatalogOption[]>(options);
     const [open, setOpen] = useState(false);
     const [search, setSearch] = useState("");
@@ -50,6 +51,19 @@ export function CatalogRelationField({ id, kind, options, value, onValueChange, 
     const quickCreate = useHttp<{ name: string }, QuickCreateResponse>({
         name: "",
     });
+
+    useEffect(() => {
+        setAvailableOptions((current) => {
+            const byId = new Map<string, CatalogOption>();
+            for (const option of current) {
+                byId.set(String(option.value), option);
+            }
+            for (const option of options) {
+                byId.set(String(option.value), option);
+            }
+            return Array.from(byId.values()).sort((left, right) => left.label.localeCompare(right.label));
+        });
+    }, [options]);
 
     const noun = kind === "author" ? "author" : "category";
     const pluralNoun = kind === "author" ? "Authors" : "Categories";
@@ -122,6 +136,7 @@ export function CatalogRelationField({ id, kind, options, value, onValueChange, 
                             left.label.localeCompare(right.label),
                         ),
                     );
+                    onOptionCreated?.(createdOption);
                     onValueChange(String(record.id));
                     setOpen(false);
                     setSearch("");
