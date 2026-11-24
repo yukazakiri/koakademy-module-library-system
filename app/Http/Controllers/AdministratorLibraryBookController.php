@@ -28,6 +28,7 @@ use Modules\LibrarySystem\Models\Author;
 use Modules\LibrarySystem\Models\Book;
 use Modules\LibrarySystem\Models\Category;
 use Modules\LibrarySystem\Models\DigitalEdition;
+use Modules\LibrarySystem\Services\DigitalEditionAiDecisionService;
 use Modules\LibrarySystem\Services\DigitalEditionInspectionService;
 use Throwable;
 
@@ -157,7 +158,7 @@ final class AdministratorLibraryBookController extends Controller
         ]);
     }
 
-    public function create(Request $request): Response
+    public function create(Request $request, DigitalEditionAiDecisionService $aiDecision): Response
     {
         $requestedFormat = BookFormat::tryFrom((string) $request->query('format', BookFormat::Physical->value))
             ?? BookFormat::Physical;
@@ -167,6 +168,7 @@ final class AdministratorLibraryBookController extends Controller
             'book' => null,
             'initial_format' => $requestedFormat->value,
             'can_manage_digital_edition' => $request->user()?->can('manageDigitalEdition', new Book) ?? false,
+            'ai_catalog_assist' => $aiDecision->availability(),
             'options' => $this->getBookOptions(),
             'flash' => session('flash'),
         ]);
@@ -179,9 +181,12 @@ final class AdministratorLibraryBookController extends Controller
         $file = $request->file('pdf');
         abort_unless($file instanceof UploadedFile, 422, 'Choose a PDF file to inspect.');
 
+        $useAi = $request->has('use_ai') ? $request->boolean('use_ai') : true;
+
         $result = $inspector->inspectFile(
             $file->getRealPath(),
-            $file->getClientOriginalName()
+            $file->getClientOriginalName(),
+            useAi: $useAi
         );
 
         return response()->json($result);
@@ -269,7 +274,7 @@ final class AdministratorLibraryBookController extends Controller
             ]);
     }
 
-    public function edit(Book $book): Response
+    public function edit(Book $book, DigitalEditionAiDecisionService $aiDecision): Response
     {
         $book->load('digitalEdition');
         $edition = $book->digitalEdition;
@@ -318,6 +323,7 @@ final class AdministratorLibraryBookController extends Controller
             ],
             'initial_format' => $book->resolvedFormat()->value,
             'can_manage_digital_edition' => request()->user()?->can('manageDigitalEdition', $book) ?? false,
+            'ai_catalog_assist' => $aiDecision->availability(),
             'options' => $this->getBookOptions(),
             'flash' => session('flash'),
         ]);

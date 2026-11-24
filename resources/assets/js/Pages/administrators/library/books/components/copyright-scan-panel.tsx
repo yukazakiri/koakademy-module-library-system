@@ -36,6 +36,34 @@ export interface SuggestedRights {
     requires_documented_permission: boolean;
 }
 
+export interface AiCatalogAssistAvailability {
+    available: boolean;
+    provider: string | null;
+    model: string | null;
+    reason: string | null;
+}
+
+export interface AiRightsRecommendation {
+    risk_level: RightsRiskLevel | null;
+    rights_basis: string | null;
+    rights_holder: string | null;
+    license_url: string | null;
+}
+
+export interface AiDecisionResult {
+    available: boolean;
+    used: boolean;
+    status: string;
+    provider: string | null;
+    model: string | null;
+    confidence: "high" | "medium" | "low" | null;
+    decision_summary: string | null;
+    decision_reasons: string[];
+    fields_updated: string[];
+    rights_recommendation: AiRightsRecommendation | null;
+    error: string | null;
+}
+
 export interface RightsScanResult {
     scanned_at: string;
     risk_level: RightsRiskLevel;
@@ -43,9 +71,11 @@ export interface RightsScanResult {
     piracy_sources: string[];
     summary: string;
     pages_scanned: number[];
+    reference_pages_excluded?: number[];
     image_only_scan: boolean;
     findings: RightsScanFinding[];
     suggested_rights: SuggestedRights;
+    ai_decision?: AiDecisionResult | null;
 }
 
 export interface PdfInspectionMetadata {
@@ -54,6 +84,10 @@ export interface PdfInspectionMetadata {
     author: string | null;
     matched_author_id: number | null;
     matched_author_name: string | null;
+    category: string | null;
+    matched_category_id: number | null;
+    matched_category_name: string | null;
+    keywords?: string[];
     description: string | null;
     publisher: string | null;
     publication_year: number | null;
@@ -62,6 +96,7 @@ export interface PdfInspectionMetadata {
     creator: string | null;
     producer: string | null;
     has_embedded_metadata: boolean;
+    ai_enriched_fields?: string[];
 }
 
 export interface PdfInspectionResponse {
@@ -69,6 +104,7 @@ export interface PdfInspectionResponse {
     missing_fields: string[];
     needs_metadata_review: boolean;
     rights_scan: RightsScanResult;
+    ai_decision?: AiDecisionResult | null;
 }
 
 interface CopyrightScanPanelProps {
@@ -196,11 +232,53 @@ export function CopyrightScanPanel({
                             <p className="text-muted-foreground/85 text-[11px]">
                                 Screened metadata and {scan.pages_scanned.length} boundary page{scan.pages_scanned.length === 1 ? "" : "s"} (pages{" "}
                                 {scan.pages_scanned.join(", ")}).
+                                {scan.reference_pages_excluded && scan.reference_pages_excluded.length > 0 && (
+                                    <>
+                                        {" "}
+                                        Excluded bibliography/references page{scan.reference_pages_excluded.length === 1 ? "" : "s"}{" "}
+                                        {scan.reference_pages_excluded.join(", ")} from publisher &amp; citation matching.
+                                    </>
+                                )}
                             </p>
                         )}
                     </div>
                 </div>
             </div>
+
+            {scan.ai_decision?.used && scan.ai_decision.decision_summary && (
+                <div
+                    className="mt-3 rounded-xl border border-violet-500/25 bg-violet-50/75 p-3 text-xs dark:border-violet-400/25 dark:bg-violet-950/30"
+                    data-testid="copyright-ai-decision"
+                >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="flex items-center gap-1.5 font-semibold text-violet-900 dark:text-violet-200">
+                            <Sparkles className="size-3.5" />
+                            Laravel AI Decision
+                        </span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                            {scan.ai_decision.confidence && (
+                                <Badge variant="outline" className="text-[10px] capitalize">
+                                    {scan.ai_decision.confidence} confidence
+                                </Badge>
+                            )}
+                            {scan.ai_decision.provider && (
+                                <Badge variant="secondary" className="text-[10px]">
+                                    {scan.ai_decision.provider}
+                                    {scan.ai_decision.model ? ` · ${scan.ai_decision.model}` : ""}
+                                </Badge>
+                            )}
+                        </div>
+                    </div>
+                    <p className="text-foreground/90 mt-1.5 leading-5">{scan.ai_decision.decision_summary}</p>
+                    {scan.ai_decision.decision_reasons && scan.ai_decision.decision_reasons.length > 0 && (
+                        <ul className="text-muted-foreground mt-1.5 list-disc space-y-0.5 pl-4 leading-5">
+                            {scan.ai_decision.decision_reasons.map((reason, idx) => (
+                                <li key={idx}>{reason}</li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
 
             {hasPublicDomainYearConflict && (
                 <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-amber-600/30 bg-amber-100/70 p-3 text-xs text-amber-950 dark:bg-amber-950/50 dark:text-amber-100">

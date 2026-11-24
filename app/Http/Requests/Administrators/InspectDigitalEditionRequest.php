@@ -26,6 +26,7 @@ final class InspectDigitalEditionRequest extends FormRequest
                 'mimetypes:application/pdf,application/x-pdf',
                 'max:'.config('librarysystem.ebooks.max_upload_kilobytes', 92160),
             ],
+            'use_ai' => ['nullable', 'boolean'],
         ];
     }
 

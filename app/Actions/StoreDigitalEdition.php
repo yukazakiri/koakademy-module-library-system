@@ -33,7 +33,8 @@ final class StoreDigitalEdition
 
         $inspection = $this->inspector->inspectFile(
             $file->getRealPath(),
-            $file->getClientOriginalName()
+            $file->getClientOriginalName(),
+            useAi: false
         );
         $rightsScan = $inspection['rights_scan'];
         $riskLevel = (string) ($rightsScan['risk_level'] ?? 'neutral');

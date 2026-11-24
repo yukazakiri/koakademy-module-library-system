@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { useHttp } from "@inertiajs/react";
-import { Check, ChevronsUpDown, Loader2, Plus, Tags, UserRound } from "lucide-react";
+import { Check, ChevronsUpDown, Loader2, Plus, Sparkles, Tags, UserRound } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
@@ -28,6 +28,8 @@ interface CatalogRelationFieldProps {
     value: string;
     onValueChange: (value: string) => void;
     onOptionCreated?: (option: CatalogOption) => void;
+    suggestedName?: string | null;
+    suggestionSource?: "pdf" | "ai";
     error?: string;
 }
 
@@ -43,11 +45,22 @@ interface QuickCreateResponse {
     };
 }
 
-export function CatalogRelationField({ id, kind, options, value, onValueChange, onOptionCreated, error }: CatalogRelationFieldProps) {
+export function CatalogRelationField({
+    id,
+    kind,
+    options,
+    value,
+    onValueChange,
+    onOptionCreated,
+    suggestedName,
+    suggestionSource = "pdf",
+    error,
+}: CatalogRelationFieldProps) {
     const [availableOptions, setAvailableOptions] = useState<CatalogOption[]>(options);
     const [open, setOpen] = useState(false);
     const [search, setSearch] = useState("");
     const [createOpen, setCreateOpen] = useState(false);
+    const [creatingSuggested, setCreatingSuggested] = useState(false);
     const quickCreate = useHttp<{ name: string }, QuickCreateResponse>({
         name: "",
     });
@@ -70,6 +83,13 @@ export function CatalogRelationField({ id, kind, options, value, onValueChange, 
     const Icon = kind === "author" ? UserRound : Tags;
     const selectedOption = availableOptions.find((option) => String(option.value) === value);
     const normalizedSearch = search.trim();
+    const cleanedSuggestion = suggestedName?.trim() || null;
+
+    const matchingSuggestedOption = useMemo(() => {
+        if (!cleanedSuggestion) return null;
+        const lowered = cleanedSuggestion.toLocaleLowerCase();
+        return availableOptions.find((option) => option.label.toLocaleLowerCase() === lowered) ?? null;
+    }, [availableOptions, cleanedSuggestion]);
 
     const filteredOptions = useMemo(() => {
         const query = normalizedSearch.toLocaleLowerCase();
@@ -95,17 +115,14 @@ export function CatalogRelationField({ id, kind, options, value, onValueChange, 
         normalizedSearch !== "" && !availableOptions.some((option) => option.label.toLocaleLowerCase() === normalizedSearch.toLocaleLowerCase());
 
     const requestQuickCreate = (name = "") => {
-        quickCreate.setData("name", name);
+        quickCreate.setData("name", name || cleanedSuggestion || "");
         quickCreate.clearErrors();
         setOpen(false);
         setCreateOpen(true);
     };
 
-    const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
-        event.preventDefault();
-        event.stopPropagation();
-
-        const name = quickCreate.data.name.trim();
+    const submitQuickCreateName = async (rawName: string, closeDialogOnSuccess: boolean) => {
+        const name = rawName.trim();
 
         if (name === "") {
             quickCreate.setError("name", `Enter a ${noun} name.`);
@@ -140,16 +157,41 @@ export function CatalogRelationField({ id, kind, options, value, onValueChange, 
                     onValueChange(String(record.id));
                     setOpen(false);
                     setSearch("");
-                    setCreateOpen(false);
+                    if (closeDialogOnSuccess) {
+                        setCreateOpen(false);
+                    }
                     quickCreate.resetAndClearErrors();
                     toast.success(`${record.name} added and selected.`);
                 },
                 onNetworkError: () => {
                     quickCreate.setError("name", `Could not create the ${noun}. Please try again.`);
+                    toast.error(`Could not create the ${noun}. Please try again.`);
                 },
             });
         } catch {
             quickCreate.setError("name", `Could not create the ${noun}. Please try again.`);
+            toast.error(`Could not create the ${noun}. Please try again.`);
+        }
+    };
+
+    const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        await submitQuickCreateName(quickCreate.data.name, true);
+    };
+
+    const handleCreateSuggested = async () => {
+        if (!cleanedSuggestion || creatingSuggested) return;
+        if (matchingSuggestedOption) {
+            onValueChange(String(matchingSuggestedOption.value));
+            toast.success(`${matchingSuggestedOption.label} selected.`);
+            return;
+        }
+        setCreatingSuggested(true);
+        try {
+            await submitQuickCreateName(cleanedSuggestion, false);
+        } finally {
+            setCreatingSuggested(false);
         }
     };
 
@@ -240,6 +282,9 @@ export function CatalogRelationField({ id, kind, options, value, onValueChange, 
                     open={createOpen}
                     onOpenChange={(nextOpen) => {
                         setCreateOpen(nextOpen);
+                        if (nextOpen && !quickCreate.data.name && cleanedSuggestion) {
+                            quickCreate.setData("name", cleanedSuggestion);
+                        }
                         if (!nextOpen) {
                             quickCreate.resetAndClearErrors();
                         }
@@ -296,7 +341,33 @@ export function CatalogRelationField({ id, kind, options, value, onValueChange, 
                     </DialogContent>
                 </Dialog>
             </div>
-            <p className="text-muted-foreground text-xs text-pretty">Type to filter, or use + to add a missing {noun} instantly.</p>
+            {!selectedOption && cleanedSuggestion ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-600/25 bg-emerald-50/70 px-3 py-2 text-xs dark:border-emerald-500/25 dark:bg-emerald-950/20">
+                    <span className="min-w-0 truncate text-emerald-900 dark:text-emerald-200">
+                        {suggestionSource === "ai" ? "AI detected" : "Detected"}: <strong>{cleanedSuggestion}</strong>
+                    </span>
+                    <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={creatingSuggested || quickCreate.processing}
+                        onClick={() => void handleCreateSuggested()}
+                        className="h-7 shrink-0 gap-1 rounded-lg bg-emerald-600 px-2.5 text-[11px] text-white hover:bg-emerald-700"
+                        data-testid={`${id}-create-suggested`}
+                    >
+                        {creatingSuggested ? (
+                            <Loader2 className="size-3 animate-spin" />
+                        ) : suggestionSource === "ai" ? (
+                            <Sparkles className="size-3" />
+                        ) : (
+                            <Plus className="size-3" />
+                        )}
+                        {matchingSuggestedOption ? "Select" : "Create & select"}
+                    </Button>
+                </div>
+            ) : (
+                <p className="text-muted-foreground text-xs text-pretty">Type to filter, or use + to add a missing {noun} instantly.</p>
+            )}
             {error && <p className="text-destructive text-xs">{error}</p>}
         </div>
     );

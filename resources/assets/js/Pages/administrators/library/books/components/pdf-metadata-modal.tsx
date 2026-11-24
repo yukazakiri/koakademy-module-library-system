@@ -4,10 +4,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { CheckCircle2, FileText, Image as ImageIcon, Loader2, Sparkles, Wand2 } from "lucide-react";
+import { CheckCircle2, FileText, Image as ImageIcon, Loader2, RefreshCw, Sparkles, Wand2 } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { CatalogRelationField, type CatalogOption } from "./catalog-entry-controls";
-import type { PdfInspectionResponse } from "./copyright-scan-panel";
+import type { AiCatalogAssistAvailability, PdfInspectionResponse } from "./copyright-scan-panel";
 
 export interface PdfMetadataDraft {
     title: string;
@@ -25,6 +25,9 @@ interface PdfMetadataModalProps {
     onOpenChange: (open: boolean) => void;
     fileName: string | null;
     inspection: PdfInspectionResponse | null;
+    aiCatalogAssist?: AiCatalogAssistAvailability;
+    reanalyzingWithAi?: boolean;
+    onReanalyzeWithAi?: () => void;
     currentValues: PdfMetadataDraft;
     authorOptions: CatalogOption[];
     categoryOptions: CatalogOption[];
@@ -40,6 +43,7 @@ interface PdfMetadataModalProps {
 const FIELD_LABELS: Record<string, string> = {
     title: "Title",
     author: "Author",
+    category: "Category",
     publisher: "Publisher",
     publication_year: "Publication Year",
     description: "Description",
@@ -51,6 +55,9 @@ export function PdfMetadataModal({
     onOpenChange,
     fileName,
     inspection,
+    aiCatalogAssist,
+    reanalyzingWithAi = false,
+    onReanalyzeWithAi,
     currentValues,
     authorOptions,
     categoryOptions,
@@ -71,7 +78,7 @@ export function PdfMetadataModal({
         setDraft({
             title: currentValues.title || meta?.suggested_title || "",
             author_id: currentValues.author_id || (meta?.matched_author_id ? String(meta.matched_author_id) : ""),
-            category_id: currentValues.category_id || "",
+            category_id: currentValues.category_id || (meta?.matched_category_id ? String(meta.matched_category_id) : ""),
             publisher: currentValues.publisher || meta?.publisher || "",
             publication_year: currentValues.publication_year || (meta?.publication_year ? String(meta.publication_year) : ""),
             isbn: currentValues.isbn || meta?.isbn || "",
@@ -80,10 +87,13 @@ export function PdfMetadataModal({
         });
     }, [open, currentValues, inspection]);
 
+    const aiDecision = inspection?.ai_decision ?? inspection?.rights_scan.ai_decision ?? null;
+    const aiEnriched = new Set(inspection?.metadata.ai_enriched_fields ?? []);
     const missingFields = inspection?.missing_fields ?? [];
     const extractedSummary = [
         inspection?.metadata.title ? "Title" : null,
         inspection?.metadata.author ? "Author" : null,
+        inspection?.metadata.category ? "Category" : null,
         inspection?.metadata.pages
             ? `${inspection.metadata.pages} ${inspection.metadata.pages === 1 ? "page" : "pages"}`
             : null,
@@ -103,34 +113,88 @@ export function PdfMetadataModal({
             <DialogContent className="max-h-[90vh] overflow-hidden rounded-2xl p-0 sm:max-w-2xl" data-testid="pdf-metadata-modal">
                 <form onSubmit={handleSubmit} className="flex max-h-[90vh] flex-col">
                     <DialogHeader className="border-b px-6 py-5 pr-11 text-left">
-                        <div className="flex items-start gap-3">
-                            <div className="bg-primary/10 text-primary flex size-10 shrink-0 items-center justify-center rounded-xl">
-                                <Wand2 className="size-5" />
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-start gap-3">
+                                <div className="bg-primary/10 text-primary flex size-10 shrink-0 items-center justify-center rounded-xl">
+                                    <Wand2 className="size-5" />
+                                </div>
+                                <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <DialogTitle className="text-lg">Review &amp; Attach PDF Metadata</DialogTitle>
+                                        {aiDecision?.used && (
+                                            <Badge className="gap-1 bg-violet-600/12 text-[11px] text-violet-800 hover:bg-violet-600/15 dark:text-violet-200">
+                                                <Sparkles className="size-3" />
+                                                Laravel AI
+                                            </Badge>
+                                        )}
+                                    </div>
+                                    <DialogDescription className="mt-1 text-pretty">
+                                        {fileName ? (
+                                            <>
+                                                We analyzed <span className="text-foreground font-medium">{fileName}</span>. Confirm or quick-create
+                                                the detected Author and Category below so readers can browse this eBook easily.
+                                            </>
+                                        ) : (
+                                            "Attach or refine catalog metadata for this PDF eBook before saving it as a draft."
+                                        )}
+                                    </DialogDescription>
+                                </div>
                             </div>
-                            <div className="min-w-0">
-                                <DialogTitle className="text-lg">Complete Missing PDF Metadata</DialogTitle>
-                                <DialogDescription className="mt-1 text-pretty">
-                                    {fileName ? (
-                                        <>
-                                            We scanned <span className="text-foreground font-medium">{fileName}</span>. Fill in any missing catalog
-                                            details below so readers can find and browse this eBook easily.
-                                        </>
-                                    ) : (
-                                        "Attach or refine catalog metadata for this PDF eBook before saving it as a draft."
-                                    )}
-                                </DialogDescription>
-                            </div>
+
+                            {onReanalyzeWithAi && aiCatalogAssist?.available && (
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={reanalyzingWithAi}
+                                    onClick={onReanalyzeWithAi}
+                                    className="shrink-0 gap-1.5 rounded-xl text-xs"
+                                    data-testid="modal-rerun-ai"
+                                >
+                                    {reanalyzingWithAi ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                                    {reanalyzingWithAi ? "Analyzing…" : "AI Re-analyze"}
+                                </Button>
+                            )}
                         </div>
                     </DialogHeader>
 
                     <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+                        {/* Laravel AI Decision Summary */}
+                        {aiDecision?.used && aiDecision.decision_summary && (
+                            <div
+                                className="rounded-2xl border border-violet-500/25 bg-violet-50/75 p-3.5 text-xs dark:border-violet-400/25 dark:bg-violet-950/25"
+                                data-testid="modal-ai-decision-banner"
+                            >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <span className="flex items-center gap-1.5 font-semibold text-violet-900 dark:text-violet-200">
+                                        <Sparkles className="size-3.5" />
+                                        Laravel AI Catalog Decision
+                                    </span>
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                        {aiDecision.confidence && (
+                                            <Badge variant="outline" className="text-[10px] capitalize">
+                                                {aiDecision.confidence} confidence
+                                            </Badge>
+                                        )}
+                                        {aiDecision.provider && (
+                                            <Badge variant="secondary" className="text-[10px]">
+                                                {aiDecision.provider}
+                                                {aiDecision.model ? ` · ${aiDecision.model}` : ""}
+                                            </Badge>
+                                        )}
+                                    </div>
+                                </div>
+                                <p className="text-muted-foreground mt-1.5 leading-5">{aiDecision.decision_summary}</p>
+                            </div>
+                        )}
+
                         {/* Extracted vs Missing Summary */}
                         <div className="bg-muted/35 grid gap-4 rounded-2xl border p-4 sm:grid-cols-[minmax(0,1fr)_auto]">
                             <div className="space-y-2.5">
                                 {extractedSummary.length > 0 && (
                                     <div className="space-y-1">
                                         <p className="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase">
-                                            Detected from PDF
+                                            Detected from PDF{aiDecision?.used ? " & Laravel AI" : ""}
                                         </p>
                                         <div className="flex flex-wrap gap-1.5">
                                             {extractedSummary.map((item) => (
@@ -149,7 +213,7 @@ export function PdfMetadataModal({
                                 {missingFields.length > 0 && (
                                     <div className="space-y-1">
                                         <p className="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase">
-                                            Missing in PDF properties
+                                            Still missing
                                         </p>
                                         <div className="flex flex-wrap gap-1.5">
                                             {missingFields.map((field) => (
@@ -218,12 +282,9 @@ export function PdfMetadataModal({
                                     value={draft.author_id}
                                     onValueChange={(value) => setDraft((prev) => ({ ...prev, author_id: value }))}
                                     onOptionCreated={onAuthorCreated}
+                                    suggestedName={inspection?.metadata.author}
+                                    suggestionSource={aiEnriched.has("author") ? "ai" : "pdf"}
                                 />
-                                {inspection?.metadata.author && !inspection.metadata.matched_author_id && (
-                                    <p className="text-xs text-amber-700 dark:text-amber-300">
-                                        PDF lists author “{inspection.metadata.author}” — search or click + to add it.
-                                    </p>
-                                )}
                             </div>
 
                             <div className="space-y-1.5">
@@ -234,16 +295,18 @@ export function PdfMetadataModal({
                                     value={draft.category_id}
                                     onValueChange={(value) => setDraft((prev) => ({ ...prev, category_id: value }))}
                                     onOptionCreated={onCategoryCreated}
+                                    suggestedName={inspection?.metadata.category}
+                                    suggestionSource={aiEnriched.has("category") ? "ai" : "pdf"}
                                 />
                             </div>
 
                             <div className="space-y-1.5">
-                                <Label htmlFor="modal_meta_publisher">Publisher</Label>
+                                <Label htmlFor="modal_meta_publisher">Publisher / Journal</Label>
                                 <Input
                                     id="modal_meta_publisher"
                                     value={draft.publisher}
                                     onChange={(event) => setDraft((prev) => ({ ...prev, publisher: event.target.value }))}
-                                    placeholder="Publisher or organization"
+                                    placeholder="Publisher, journal, or organization"
                                     className="h-10 rounded-xl"
                                 />
                             </div>

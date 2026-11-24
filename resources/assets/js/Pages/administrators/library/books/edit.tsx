@@ -38,6 +38,7 @@ import {
     Image as ImageIcon,
     Layers,
     Loader2,
+    RefreshCw,
     Save,
     ShieldBan,
     ShieldCheck,
@@ -51,6 +52,7 @@ import { toast } from "sonner";
 import { CatalogIdentifierField, CatalogRelationField, type CatalogOption } from "./components/catalog-entry-controls";
 import {
     CopyrightScanPanel,
+    type AiCatalogAssistAvailability,
     type PdfInspectionResponse,
     type RightsRiskLevel,
     type RightsScanResult,
@@ -133,6 +135,7 @@ interface Props {
     book: BookRecord | null;
     initial_format?: BookFormatValue;
     can_manage_digital_edition?: boolean;
+    ai_catalog_assist?: AiCatalogAssistAvailability;
     options: {
         authors: CatalogOption[];
         categories: CatalogOption[];
@@ -212,9 +215,10 @@ function getCsrfHeaders(): Record<string, string> {
     return headers;
 }
 
-async function requestPdfInspection(file: File): Promise<PdfInspectionResponse> {
+async function requestPdfInspection(file: File, useAi = true): Promise<PdfInspectionResponse> {
     const body = new FormData();
     body.append("pdf", file);
+    body.append("use_ai", useAi ? "1" : "0");
 
     const response = await fetch(inspectPdf.url(), {
         method: "POST",
@@ -341,6 +345,7 @@ export default function LibraryBookEdit({
     book,
     initial_format,
     can_manage_digital_edition,
+    ai_catalog_assist,
     options,
     flash,
 }: Props) {
@@ -380,6 +385,7 @@ export default function LibraryBookEdit({
     const [bookErrors, setBookErrors] = useState<Record<string, unknown>>({});
 
     // Create-mode PDF inspection & metadata modal state
+    const [useAiDecision, setUseAiDecision] = useState<boolean>(Boolean(ai_catalog_assist?.available));
     const [inspectingPdf, setInspectingPdf] = useState(false);
     const [pdfInspection, setPdfInspection] = useState<PdfInspectionResponse | null>(null);
     const [pdfInspectError, setPdfInspectError] = useState<string | null>(null);
@@ -475,6 +481,46 @@ export default function LibraryBookEdit({
         }
     };
 
+    const applyInspectionResultToForm = (result: PdfInspectionResponse): string[] => {
+        const meta = result.metadata;
+        const autoFilled: string[] = [];
+
+        if (!form.data.title && meta.suggested_title) {
+            form.setData("title", meta.suggested_title);
+            autoFilled.push("title");
+        }
+        if (!form.data.author_id && meta.matched_author_id) {
+            form.setData("author_id", String(meta.matched_author_id));
+            autoFilled.push("author");
+        }
+        if (!form.data.category_id && meta.matched_category_id) {
+            form.setData("category_id", String(meta.matched_category_id));
+            autoFilled.push("category");
+        }
+        if (!form.data.publisher && meta.publisher) {
+            form.setData("publisher", meta.publisher);
+            autoFilled.push("publisher");
+        }
+        if (!form.data.publication_year && meta.publication_year) {
+            form.setData("publication_year", String(meta.publication_year));
+            autoFilled.push("year");
+        }
+        if (!form.data.isbn && meta.isbn) {
+            form.setData("isbn", meta.isbn);
+            autoFilled.push("ISBN");
+        }
+        if (!form.data.pages && meta.pages) {
+            form.setData("pages", String(meta.pages));
+            autoFilled.push("pages");
+        }
+        if (!form.data.description && meta.description) {
+            form.setData("description", meta.description);
+            autoFilled.push("description");
+        }
+
+        return autoFilled;
+    };
+
     const handleCreatePdfSelection = async (file: File | null) => {
         if (!file) {
             clearCreatePdf();
@@ -505,41 +551,10 @@ export default function LibraryBookEdit({
         });
 
         try {
-            const result = await requestPdfInspection(file);
+            const result = await requestPdfInspection(file, useAiDecision);
             setPdfInspection(result);
 
-            // Auto-fill empty catalog fields from PDF metadata
-            const meta = result.metadata;
-            const autoFilled: string[] = [];
-
-            if (!form.data.title && meta.suggested_title) {
-                form.setData("title", meta.suggested_title);
-                autoFilled.push("title");
-            }
-            if (!form.data.author_id && meta.matched_author_id) {
-                form.setData("author_id", String(meta.matched_author_id));
-                autoFilled.push("author");
-            }
-            if (!form.data.publisher && meta.publisher) {
-                form.setData("publisher", meta.publisher);
-                autoFilled.push("publisher");
-            }
-            if (!form.data.publication_year && meta.publication_year) {
-                form.setData("publication_year", String(meta.publication_year));
-                autoFilled.push("year");
-            }
-            if (!form.data.isbn && meta.isbn) {
-                form.setData("isbn", meta.isbn);
-                autoFilled.push("ISBN");
-            }
-            if (!form.data.pages && meta.pages) {
-                form.setData("pages", String(meta.pages));
-                autoFilled.push("pages");
-            }
-            if (!form.data.description && meta.description) {
-                form.setData("description", meta.description);
-                autoFilled.push("description");
-            }
+            const autoFilled = applyInspectionResultToForm(result);
 
             if (result.rights_scan.piracy_blocked) {
                 toast.error("Piracy source watermark detected in this PDF.", {
@@ -550,7 +565,11 @@ export default function LibraryBookEdit({
                     description: "This eBook will stay in Draft until documented permission is recorded.",
                 });
             } else if (autoFilled.length > 0) {
-                toast.success(`Extracted ${autoFilled.join(", ")} from PDF.`);
+                toast.success(
+                    result.ai_decision?.used
+                        ? `Laravel AI & PDF scan extracted ${autoFilled.join(", ")}.`
+                        : `Extracted ${autoFilled.join(", ")} from PDF.`,
+                );
             }
 
             if (result.needs_metadata_review && !result.rights_scan.piracy_blocked) {
@@ -560,6 +579,36 @@ export default function LibraryBookEdit({
             const message = error instanceof Error ? error.message : "Could not inspect the PDF.";
             setPdfInspectError(message);
             toast.error("PDF inspection failed", { description: message });
+        } finally {
+            setInspectingPdf(false);
+        }
+    };
+
+    const handleRerunAiDecision = async () => {
+        const file = form.data.digital_pdf;
+        if (!file || inspectingPdf) return;
+
+        setInspectingPdf(true);
+        setPdfInspectError(null);
+
+        try {
+            const result = await requestPdfInspection(file, true);
+            setPdfInspection(result);
+            const autoFilled = applyInspectionResultToForm(result);
+
+            if (result.ai_decision?.used) {
+                toast.success(
+                    autoFilled.length > 0
+                        ? `Laravel AI decision applied (${autoFilled.join(", ")}).`
+                        : "Laravel AI decision refreshed.",
+                );
+            } else if (result.ai_decision?.error) {
+                toast.info(result.ai_decision.error);
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Could not run AI decision.";
+            setPdfInspectError(message);
+            toast.error("AI analysis failed", { description: message });
         } finally {
             setInspectingPdf(false);
         }
@@ -915,16 +964,59 @@ export default function LibraryBookEdit({
                                             <Badge className="bg-amber-500/15 text-amber-800 hover:bg-amber-500/20 dark:text-amber-200">
                                                 Always Draft First
                                             </Badge>
+                                            {ai_catalog_assist?.available ? (
+                                                <label
+                                                    htmlFor="use_ai_decision_toggle"
+                                                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 py-0.5 text-[11px] font-medium text-violet-900 dark:text-violet-200"
+                                                    data-testid="toggle-laravel-ai-decision"
+                                                >
+                                                    <Checkbox
+                                                        id="use_ai_decision_toggle"
+                                                        checked={useAiDecision}
+                                                        onCheckedChange={(checked) => setUseAiDecision(checked === true)}
+                                                        className="size-3.5"
+                                                    />
+                                                    <Sparkles className="size-3" />
+                                                    Laravel AI Decision
+                                                </label>
+                                            ) : (
+                                                <Badge
+                                                    variant="outline"
+                                                    className="text-muted-foreground gap-1 text-[11px] font-normal"
+                                                    title={ai_catalog_assist?.reason ?? "Configure an AI provider in Admin → AI Settings"}
+                                                >
+                                                    <Sparkles className="size-3" />
+                                                    AI Decision (unconfigured)
+                                                </Badge>
+                                            )}
                                         </div>
                                         <CardDescription className="mt-1 max-w-2xl text-pretty">
-                                            Drop a PDF to auto-fill catalog metadata, render a Page 1 cover, and screen for copyright & piracy notices.
-                                            You’ll review and publish it on the next screen once everything is verified.
+                                            Drop a PDF to auto-extract title, author, category, and abstract, render a Page 1 cover, and screen for
+                                            copyright &amp; piracy notices.
                                         </CardDescription>
                                     </div>
                                 </div>
 
                                 {form.data.digital_pdf && (
                                     <div className="flex flex-wrap items-center gap-2">
+                                        {ai_catalog_assist?.available && (
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="outline"
+                                                disabled={inspectingPdf}
+                                                className="gap-1.5 rounded-xl border-violet-500/30 text-violet-800 hover:bg-violet-500/10 dark:text-violet-200"
+                                                onClick={() => void handleRerunAiDecision()}
+                                                data-testid="rerun-laravel-ai-decision"
+                                            >
+                                                {inspectingPdf ? (
+                                                    <Loader2 className="size-3.5 animate-spin" />
+                                                ) : (
+                                                    <RefreshCw className="size-3.5" />
+                                                )}
+                                                Re-run AI decision
+                                            </Button>
+                                        )}
                                         <Button
                                             type="button"
                                             size="sm"
@@ -1208,6 +1300,8 @@ export default function LibraryBookEdit({
                                 value={form.data.author_id}
                                 onValueChange={(value) => form.setData("author_id", value)}
                                 onOptionCreated={registerAuthorOption}
+                                suggestedName={pdfInspection?.metadata.author}
+                                suggestionSource={pdfInspection?.metadata.ai_enriched_fields?.includes("author") ? "ai" : "pdf"}
                                 error={bookError("author_id") ?? undefined}
                             />
 
@@ -1218,6 +1312,8 @@ export default function LibraryBookEdit({
                                 value={form.data.category_id}
                                 onValueChange={(value) => form.setData("category_id", value)}
                                 onOptionCreated={registerCategoryOption}
+                                suggestedName={pdfInspection?.metadata.category}
+                                suggestionSource={pdfInspection?.metadata.ai_enriched_fields?.includes("category") ? "ai" : "pdf"}
                                 error={bookError("category_id") ?? undefined}
                             />
 
@@ -1481,6 +1577,9 @@ export default function LibraryBookEdit({
                     onOpenChange={setMetadataModalOpen}
                     fileName={form.data.digital_pdf?.name ?? null}
                     inspection={pdfInspection}
+                    aiCatalogAssist={ai_catalog_assist}
+                    reanalyzingWithAi={inspectingPdf}
+                    onReanalyzeWithAi={() => void handleRerunAiDecision()}
                     currentValues={{
                         title: form.data.title,
                         author_id: form.data.author_id,

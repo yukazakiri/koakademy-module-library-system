@@ -31,6 +31,9 @@
     "require-dev": {
         "pestphp/pest": "^5.0"
     },
+    "suggest": {
+        "laravel/ai": "Enables structured Laravel AI cataloging (author, category, abstract) and copyright decisioning for uploaded eBook PDFs."
+    },
     "autoload": {
         "psr-4": {
             "Modules\\LibrarySystem\\": "app/",
