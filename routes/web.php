@@ -14,7 +14,7 @@ use Modules\LibrarySystem\Http\Controllers\DigitalLibraryController;
 use Modules\LibrarySystem\Http\Controllers\DigitalLibraryStateController;
 use Modules\LibrarySystem\Http\Middleware\EnsureLibraryModuleEnabled;
 
-Route::middleware(['auth', EnsureLibraryModuleEnabled::class])
+Route::middleware([EnsureLibraryModuleEnabled::class])
     ->name('library.')
     ->prefix('library')
     ->group(function (): void {
@@ -24,9 +24,17 @@ Route::middleware(['auth', EnsureLibraryModuleEnabled::class])
         Route::get('/books/{book}/content', [DigitalLibraryController::class, 'content'])
             ->middleware('throttle:120,1')
             ->name('books.content');
+    });
+
+Route::middleware(['auth', EnsureLibraryModuleEnabled::class])
+    ->name('library.')
+    ->prefix('library')
+    ->group(function (): void {
         Route::get('/books/{book}/download', [DigitalLibraryController::class, 'download'])
             ->middleware('throttle:30,1')
             ->name('books.download');
+        Route::get('/books/{book}/authenticate', [DigitalLibraryController::class, 'authenticate'])
+            ->name('books.authenticate');
 
         Route::post('/books/{book}/favorite', [DigitalLibraryStateController::class, 'favorite'])
             ->name('books.favorite');

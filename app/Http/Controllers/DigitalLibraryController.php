@@ -6,107 +6,45 @@ namespace Modules\LibrarySystem\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 use Inertia\Response;
 use Modules\LibrarySystem\Http\Requests\DigitalLibraryCatalogRequest;
 use Modules\LibrarySystem\Models\Book;
-use Modules\LibrarySystem\Models\Category;
 use Modules\LibrarySystem\Models\DigitalEdition;
 use Modules\LibrarySystem\Models\UserBookState;
+use Modules\LibrarySystem\Services\DigitalCatalogService;
+use Modules\LibrarySystem\Services\DigitalEditionDeliveryService;
 use Symfony\Component\HttpFoundation\Response as HttpResponse;
-use Throwable;
 
 final class DigitalLibraryController extends Controller
 {
+    public function __construct(
+        private readonly DigitalCatalogService $catalog,
+        private readonly DigitalEditionDeliveryService $delivery,
+    ) {}
+
     public function index(DigitalLibraryCatalogRequest $request): Response
     {
         $validated = $request->validated();
         $user = $request->user();
-        abort_unless($user instanceof User, 401);
+        $authenticatedUser = $user instanceof User ? $user : null;
 
         $search = mb_trim((string) ($validated['search'] ?? ''));
         $availability = (string) ($validated['availability'] ?? 'all');
-        $collection = (string) ($validated['collection'] ?? 'all');
+        $collection = $authenticatedUser instanceof User ? (string) ($validated['collection'] ?? 'all') : 'all';
         $sort = (string) ($validated['sort'] ?? 'title');
 
-        $query = Book::query()
-            ->select([
-                'id',
-                'title',
-                'isbn',
-                'call_number',
-                'author_id',
-                'category_id',
-                'publisher',
-                'publication_year',
-                'description',
-                'cover_image',
-                'cover_image_path',
-                'created_at',
-            ])
-            ->with([
-                'author:id,name',
-                'category:id,name,color',
-                'digitalEdition' => fn ($query) => $query
-                    ->accessible()
-                    ->select(['id', 'book_id', 'downloads_allowed', 'rights_expires_at']),
-            ])
-            ->withExists([
-                'userStates as is_favorite' => fn (Builder $query) => $query
-                    ->where('user_id', $user->id)
-                    ->whereNotNull('favorited_at'),
-            ])
-            ->when($search !== '', function (Builder $query) use ($search): void {
-                $query->where(function (Builder $query) use ($search): void {
-                    $query
-                        ->whereLike('title', "%{$search}%")
-                        ->orWhereLike('isbn', "%{$search}%")
-                        ->orWhereLike('call_number', "%{$search}%")
-                        ->orWhereHas('author', fn (Builder $query) => $query->whereLike('name', "%{$search}%"))
-                        ->orWhereHas('category', fn (Builder $query) => $query->whereLike('name', "%{$search}%"));
-                });
-            })
-            ->when(
-                isset($validated['category_id']),
-                fn (Builder $query) => $query->where('category_id', $validated['category_id'])
-            )
-            ->when(
-                isset($validated['year']),
-                fn (Builder $query) => $query->where('publication_year', $validated['year'])
-            )
-            ->when(
-                $availability === 'online',
-                fn (Builder $query) => $query->whereHas('digitalEdition', fn (Builder $query) => $query->accessible())
-            )
-            ->when(
-                $availability === 'catalog',
-                fn (Builder $query) => $query->whereDoesntHave('digitalEdition', fn (Builder $query) => $query->accessible())
-            )
-            ->when(
-                $collection === 'favorites',
-                fn (Builder $query) => $query->whereHas('userStates', fn (Builder $query) => $query
-                    ->where('user_id', $user->id)
-                    ->whereNotNull('favorited_at'))
-            )
-            ->when(
-                $collection === 'recent',
-                fn (Builder $query) => $query->whereHas('userStates', fn (Builder $query) => $query
-                    ->where('user_id', $user->id)
-                    ->whereNotNull('last_read_at'))
-            );
-
-        $this->applySort($query, $sort, $collection, $user);
-
-        $books = $query
-            ->paginate(24)
-            ->withQueryString()
-            ->through(fn (Book $book): array => $this->bookCardData($book));
-
         return Inertia::render('library/index', [
-            'books' => $books,
+            'books' => $this->catalog->paginateCatalog($authenticatedUser, [
+                ...$validated,
+                'search' => $search,
+                'availability' => $availability,
+                'collection' => $collection,
+                'sort' => $sort,
+            ]),
             'filters' => [
                 'search' => $search,
                 'category_id' => $validated['category_id'] ?? null,
@@ -115,97 +53,98 @@ final class DigitalLibraryController extends Controller
                 'collection' => $collection,
                 'sort' => $sort,
             ],
-            'options' => [
-                'categories' => Category::query()
-                    ->select(['id', 'name'])
-                    ->orderBy('name')
-                    ->get(),
-                'years' => Book::query()
-                    ->whereNotNull('publication_year')
-                    ->distinct()
-                    ->orderByDesc('publication_year')
-                    ->pluck('publication_year'),
-            ],
-            'stats' => [
-                'catalog_books' => Book::query()->count(),
-                'available_online' => DigitalEdition::query()->accessible()->whereHas('book')->count(),
-                'favorites' => UserBookState::query()
-                    ->where('user_id', $user->id)
-                    ->whereNotNull('favorited_at')
-                    ->whereHas('book')
-                    ->count(),
-            ],
+            'options' => $this->catalog->catalogOptions(),
+            'stats' => $this->catalog->catalogStats($authenticatedUser),
+            'access' => $this->authUrls($authenticatedUser),
         ]);
     }
 
-    public function show(Book $book): Response
+    public function show(Request $request, Book $book): Response
     {
-        $authenticatedUser = request()->user();
-        abort_unless($authenticatedUser instanceof User, 401);
+        $user = $request->user();
+        $authenticatedUser = $user instanceof User ? $user : null;
 
         $book->load([
             'author:id,name,biography',
             'category:id,name,color,description',
             'digitalEdition' => fn ($query) => $query
                 ->accessible()
-                ->select(['id', 'book_id', 'downloads_allowed', 'rights_basis', 'rights_holder', 'license_url', 'rights_expires_at']),
+                ->select([
+                    'id',
+                    'book_id',
+                    'downloads_allowed',
+                    'size_bytes',
+                    'rights_basis',
+                    'rights_holder',
+                    'license_url',
+                    'rights_expires_at',
+                ]),
         ]);
 
-        $state = UserBookState::query()
-            ->where('user_id', $authenticatedUser->id)
-            ->where('book_id', $book->id)
-            ->first();
+        $state = $authenticatedUser instanceof User
+            ? UserBookState::query()
+                ->where('user_id', $authenticatedUser->id)
+                ->where('book_id', $book->id)
+                ->first()
+            : null;
 
-        $related = Book::query()
-            ->select(['id', 'title', 'author_id', 'category_id', 'publication_year', 'cover_image', 'cover_image_path'])
-            ->where('category_id', $book->category_id)
-            ->whereKeyNot($book->id)
-            ->with([
-                'author:id,name',
-                'digitalEdition' => fn ($query) => $query
-                    ->accessible()
-                    ->select(['id', 'book_id']),
-            ])
-            ->orderBy('title')
-            ->orderBy('id')
-            ->limit(4)
-            ->get()
-            ->map(fn (Book $relatedBook): array => $this->bookCardData($relatedBook));
+        $edition = $book->digitalEdition;
+        $downloadsAllowed = $edition instanceof DigitalEdition && $edition->downloads_allowed;
+        $readyAction = $authenticatedUser instanceof User && $request->string('action')->toString() === 'download'
+            ? 'download'
+            : null;
 
         return Inertia::render('library/show', [
-            'book' => $this->bookDetailData($book),
+            'book' => $this->catalog->bookDetailData($book),
             'state' => [
                 'is_favorite' => $state?->favorited_at !== null,
                 'last_page' => $state?->last_page,
                 'total_pages' => $state?->total_pages,
                 'last_read_at' => $state?->last_read_at?->toIso8601String(),
             ],
-            'related' => $related,
+            'related' => $this->catalog->relatedBooks($book),
             'takedown_email' => config('librarysystem.ebooks.takedown_email'),
+            'access' => [
+                ...$this->authUrls($authenticatedUser),
+                'can_download' => $authenticatedUser instanceof User && $downloadsAllowed,
+                'download_requires_auth' => ! $authenticatedUser instanceof User && $downloadsAllowed,
+                'authenticate_url' => route('library.books.authenticate', $book),
+                'ready_action' => $readyAction,
+            ],
         ]);
     }
 
-    public function read(Book $book): Response
+    public function read(Request $request, Book $book): Response
     {
-        $user = request()->user();
-        abort_unless($user instanceof User, 401);
+        $user = $request->user();
+        $authenticatedUser = $user instanceof User ? $user : null;
 
         $book->load(['author:id,name', 'digitalEdition' => fn ($query) => $query->accessible()]);
         $edition = $book->digitalEdition;
 
         abort_unless($edition instanceof DigitalEdition, 404);
-        $this->abortUnlessObjectExists($edition);
+        $this->delivery->assertObjectExists($edition);
 
-        $state = UserBookState::query()->firstOrCreate([
-            'user_id' => $user->id,
-            'book_id' => $book->id,
-        ]);
-        $state->forceFill(['last_read_at' => now()])->save();
+        $state = null;
+        $bookmarks = collect();
 
-        $bookmarks = $book->bookmarks()
-            ->where('user_id', $user->id)
-            ->orderBy('page')
-            ->get(['id', 'page', 'label']);
+        if ($authenticatedUser instanceof User) {
+            $state = UserBookState::query()->firstOrCreate([
+                'user_id' => $authenticatedUser->id,
+                'book_id' => $book->id,
+            ]);
+            $state->forceFill(['last_read_at' => now()])->save();
+
+            $bookmarks = $book->bookmarks()
+                ->where('user_id', $authenticatedUser->id)
+                ->orderBy('page')
+                ->get(['id', 'page', 'label']);
+        }
+
+        $canDownload = $authenticatedUser instanceof User && $edition->downloads_allowed;
+        $readyAction = $authenticatedUser instanceof User && $request->string('action')->toString() === 'download'
+            ? 'download'
+            : null;
 
         return Inertia::render('library/read', [
             'book' => [
@@ -213,203 +152,69 @@ final class DigitalLibraryController extends Controller
                 'title' => $book->title,
                 'author' => $book->author?->name,
                 'downloads_allowed' => $edition->downloads_allowed,
+                'file_size_bytes' => $edition->size_bytes,
             ],
             'reader' => [
                 'content_url' => route('library.books.content', $book),
-                'download_url' => $edition->downloads_allowed
-                    ? route('library.books.download', $book)
-                    : null,
-                'last_page' => $state->last_page ?? 1,
-                'total_pages' => $state->total_pages,
+                'download_url' => $canDownload ? route('library.books.download', $book) : null,
+                'last_page' => $state?->last_page ?? 1,
+                'total_pages' => $state?->total_pages ?? $book->pages,
                 'bookmarks' => $bookmarks,
+                'sync_enabled' => $authenticatedUser instanceof User,
+                'is_guest' => ! $authenticatedUser instanceof User,
+                'can_download' => $canDownload,
+                'download_requires_auth' => ! $authenticatedUser instanceof User && $edition->downloads_allowed,
+                'authenticate_url' => route('library.books.authenticate', ['book' => $book, 'from' => 'read']),
+                'ready_action' => $readyAction,
+                ...$this->authUrls($authenticatedUser),
             ],
         ]);
     }
 
     public function content(Book $book): HttpResponse
     {
-        $edition = $this->accessibleEdition($book);
-        $this->abortUnlessObjectExists($edition);
+        $edition = $this->delivery->accessibleEdition($book);
+        $this->delivery->assertObjectExists($edition);
 
-        return $this->fileResponse($book, $edition, false);
+        return $this->delivery->inlineResponse($book, $edition);
     }
 
-    public function download(Book $book): HttpResponse
+    public function download(Request $request, Book $book): HttpResponse
     {
-        $edition = $this->accessibleEdition($book);
-        abort_unless($edition->downloads_allowed, 403, 'Downloads are not permitted for this title.');
-        $this->abortUnlessObjectExists($edition);
+        $user = $request->user();
+        abort_unless($user instanceof User, 401);
 
-        activity('library')
-            ->causedBy(request()->user())
-            ->performedOn($book)
-            ->withProperties(['digital_edition_id' => $edition->id])
-            ->log('Downloaded a digital edition');
+        $edition = $this->delivery->accessibleEdition($book);
 
-        return $this->fileResponse($book, $edition, true);
+        return $this->delivery->downloadResponse($book, $edition, $user);
     }
 
-    private function accessibleEdition(Book $book): DigitalEdition
+    public function authenticate(Request $request, Book $book): RedirectResponse
     {
-        $edition = $book->digitalEdition()->accessible()->first();
-        abort_unless($edition instanceof DigitalEdition, 404);
+        $from = $request->string('from')->toString();
 
-        return $edition;
-    }
-
-    private function abortUnlessObjectExists(DigitalEdition $edition): void
-    {
-        try {
-            $exists = Storage::disk($edition->disk)->exists($edition->path);
-        } catch (Throwable $throwable) {
-            report($throwable);
-            abort(503, 'The digital edition is temporarily unavailable.');
+        if ($from === 'read' && $book->digitalEdition()->accessible()->exists()) {
+            return redirect()->route('library.books.read', [
+                'book' => $book,
+                'action' => 'download',
+            ]);
         }
 
-        abort_unless($exists, 404);
-    }
-
-    private function fileResponse(Book $book, DigitalEdition $edition, bool $download): HttpResponse
-    {
-        $filename = (Str::slug($book->title) ?: 'book').'.pdf';
-        $driver = config("filesystems.disks.{$edition->disk}.driver");
-
-        try {
-            if ($driver === 's3') {
-                $minutes = (int) config(
-                    $download ? 'librarysystem.ebooks.download_url_minutes' : 'librarysystem.ebooks.reader_url_minutes',
-                    $download ? 5 : 60
-                );
-                $expiresAt = now()->addMinutes($minutes);
-
-                if ($edition->rights_expires_at?->isBefore($expiresAt)) {
-                    $expiresAt = $edition->rights_expires_at;
-                }
-
-                $disposition = $download ? 'attachment' : 'inline';
-                $url = Storage::disk($edition->disk)->temporaryUrl(
-                    $edition->path,
-                    $expiresAt,
-                    [
-                        'ResponseContentType' => 'application/pdf',
-                        'ResponseContentDisposition' => sprintf('%s; filename="%s"', $disposition, $filename),
-                        'ResponseCacheControl' => 'private, no-store',
-                    ]
-                );
-
-                return redirect()->away($url);
-            }
-
-            if ($download) {
-                return Storage::disk($edition->disk)->download($edition->path, $filename, [
-                    'Content-Type' => 'application/pdf',
-                    'Cache-Control' => 'private, no-store',
-                    'X-Content-Type-Options' => 'nosniff',
-                ]);
-            }
-
-            return Storage::disk($edition->disk)->response(
-                $edition->path,
-                $filename,
-                [
-                    'Content-Type' => 'application/pdf',
-                    'Cache-Control' => 'private, no-store',
-                    'X-Content-Type-Options' => 'nosniff',
-                ],
-                'inline'
-            );
-        } catch (Throwable $throwable) {
-            report($throwable);
-            abort(503, 'The digital edition is temporarily unavailable.');
-        }
-    }
-
-    private function applySort(Builder $query, string $sort, string $collection, User $user): void
-    {
-        if ($collection === 'recent') {
-            $query->orderByDesc(
-                UserBookState::query()
-                    ->select('last_read_at')
-                    ->whereColumn('book_id', 'library_books.id')
-                    ->where('user_id', $user->id)
-                    ->limit(1)
-            )->orderBy('id');
-
-            return;
-        }
-
-        match ($sort) {
-            'year_newest' => $query->orderByDesc('publication_year')->orderBy('title')->orderBy('id'),
-            'year_oldest' => $query->orderBy('publication_year')->orderBy('title')->orderBy('id'),
-            'recently_added' => $query->orderByDesc('created_at')->orderByDesc('id'),
-            default => $query->orderBy('title')->orderBy('id'),
-        };
+        return redirect()->route('library.books.show', [
+            'book' => $book,
+            'action' => 'download',
+        ]);
     }
 
     /**
-     * @return array<string, mixed>
+     * @return array{is_authenticated: bool, login_url: string, signup_url: string}
      */
-    private function bookCardData(Book $book): array
+    private function authUrls(?User $user): array
     {
         return [
-            'id' => $book->id,
-            'title' => $book->title,
-            'author' => $book->author?->name,
-            'category' => $book->category?->name,
-            'category_color' => $book->category?->color,
-            'publication_year' => $book->publication_year,
-            'description' => Str::limit(strip_tags((string) $book->description), 150),
-            'cover_image_url' => $this->coverImageUrl($book),
-            'available_online' => $book->digitalEdition instanceof DigitalEdition,
-            'is_favorite' => (bool) ($book->is_favorite ?? false),
+            'is_authenticated' => $user instanceof User,
+            'login_url' => Route::has('login') ? route('login') : '/login',
+            'signup_url' => Route::has('signup') ? route('signup') : '/signup',
         ];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function bookDetailData(Book $book): array
-    {
-        $edition = $book->digitalEdition;
-
-        return [
-            'id' => $book->id,
-            'title' => $book->title,
-            'isbn' => $book->isbn,
-            'call_number' => $book->call_number,
-            'accession_number' => $book->accession_number,
-            'author' => $book->author?->name,
-            'author_biography' => $book->author?->biography,
-            'category' => $book->category?->name,
-            'category_color' => $book->category?->color,
-            'publisher' => $book->publisher,
-            'publication_year' => $book->publication_year,
-            'pages' => $book->pages,
-            'description' => $book->description,
-            'location' => $book->location,
-            'cover_image_url' => $this->coverImageUrl($book),
-            'available_online' => $edition instanceof DigitalEdition,
-            'downloads_allowed' => $edition?->downloads_allowed ?? false,
-            'rights_basis' => $edition?->rights_basis?->value,
-            'rights_holder' => $edition?->rights_holder,
-            'license_url' => $edition?->license_url,
-            'rights_expires_at' => $edition?->rights_expires_at?->toIso8601String(),
-        ];
-    }
-
-    private function coverImageUrl(Book $book): ?string
-    {
-        if (filled($book->cover_image_path)) {
-            return Storage::disk('public')->url((string) $book->cover_image_path);
-        }
-
-        if (! filled($book->cover_image)) {
-            return null;
-        }
-
-        $url = filter_var($book->cover_image, FILTER_VALIDATE_URL);
-        $scheme = is_string($url) ? parse_url($url, PHP_URL_SCHEME) : null;
-
-        return is_string($url) && in_array($scheme, ['http', 'https'], true) ? $url : null;
     }
 }

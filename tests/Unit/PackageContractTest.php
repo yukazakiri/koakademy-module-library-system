@@ -15,3 +15,20 @@ it('publishes a consistent LibrarySystem Composer module contract', function ():
     expect($manifest['version'])->toMatch('/^\d+\.\d+\.\d+$/');
     expect($composer['require']['php'])->toBe($manifest['requires']['php']);
 });
+
+it('keeps public eBook reading routes separate from authenticated download routes', function (): void {
+    $path = dirname(__DIR__, 2);
+    $routes = (string) file_get_contents($path.'/routes/web.php');
+
+    expect($routes)
+        ->toContain('Route::middleware([EnsureLibraryModuleEnabled::class])')
+        ->toContain("Route::get('/', [DigitalLibraryController::class, 'index'])->name('index');")
+        ->toContain("Route::get('/books/{book}/read', [DigitalLibraryController::class, 'read'])->name('books.read');")
+        ->toContain("Route::get('/books/{book}/content', [DigitalLibraryController::class, 'content'])")
+        ->toContain("Route::middleware(['auth', EnsureLibraryModuleEnabled::class])")
+        ->toContain("Route::get('/books/{book}/download', [DigitalLibraryController::class, 'download'])")
+        ->toContain("Route::get('/books/{book}/authenticate', [DigitalLibraryController::class, 'authenticate'])");
+
+    expect(class_exists(\Modules\LibrarySystem\Services\DigitalEditionDeliveryService::class))->toBeTrue();
+    expect(class_exists(\Modules\LibrarySystem\Services\DigitalCatalogService::class))->toBeTrue();
+});
