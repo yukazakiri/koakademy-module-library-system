@@ -4,9 +4,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { create as createBook } from "@/routes/administrators/library/books";
+import { index as publicLibraryIndex } from "@/routes/library";
 import type { User } from "@/types/user";
 import { Head, Link, router } from "@inertiajs/react";
-import { BookOpen, Plus, Search } from "lucide-react";
+import { BookOpen, ExternalLink, FileText, Plus, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useDebouncedCallback } from "use-debounce";
@@ -35,16 +36,20 @@ interface Props {
         total_books: number;
         available_copies: number;
         borrowed_books: number;
+        published_ebooks?: number;
+        draft_ebooks?: number;
     };
     filters: {
         search?: string | null;
         status?: string | null;
+        digital?: string | null;
         sort?: string;
         direction?: string;
         per_page?: number;
     };
     options: {
         statuses: { value: string; label: string }[];
+        digital?: { value: string; label: string }[];
         per_page: { value: number; label: string }[];
     };
     flash?: {
@@ -79,6 +84,14 @@ export default function LibraryBooksIndex({ user, books, stats, filters, options
         );
     };
 
+    const handleDigitalChange = (value: string) => {
+        router.get(
+            route("administrators.library.books.index"),
+            { ...filters, digital: value === "all" ? null : value, page: 1 },
+            { preserveState: true, replace: true },
+        );
+    };
+
     const handleSortFieldChange = (value: string) => {
         router.get(route("administrators.library.books.index"), { ...filters, sort: value, page: 1 }, { preserveState: true, replace: true });
     };
@@ -86,6 +99,14 @@ export default function LibraryBooksIndex({ user, books, stats, filters, options
     const handleSortDirectionChange = (value: string) => {
         router.get(route("administrators.library.books.index"), { ...filters, direction: value, page: 1 }, { preserveState: true, replace: true });
     };
+
+    const digitalOptions = options.digital ?? [
+        { value: "all", label: "All formats" },
+        { value: "published", label: "Published eBooks" },
+        { value: "downloadable", label: "Downloadable eBooks" },
+        { value: "draft", label: "Draft eBooks" },
+        { value: "none", label: "Print only" },
+    ];
 
     const sortFieldOptions = [
         { value: "created_at", label: "Recently Added" },
@@ -118,35 +139,56 @@ export default function LibraryBooksIndex({ user, books, stats, filters, options
                     <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                         <div className="space-y-2">
                             <div className="flex items-center gap-3">
-                                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600">
+                                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
                                     <BookOpen className="h-5 w-5" />
                                 </div>
                                 <div>
-                                    <CardTitle>Library Books</CardTitle>
-                                    <CardDescription>Track catalog inventory and availability.</CardDescription>
+                                    <CardTitle>Library Books & Hosted eBooks</CardTitle>
+                                    <CardDescription>Track print inventory and publish rights-cleared PDF editions for open browser reading.</CardDescription>
                                 </div>
                             </div>
-                            <div className="text-muted-foreground flex flex-wrap gap-3 text-sm">
-                                <span>Total titles: {stats.total_books}</span>
-                                <span>Copies available: {stats.available_copies}</span>
-                                <span>Borrowed: {stats.borrowed_books}</span>
+                            <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm">
+                                <span>
+                                    Total titles: <strong className="text-foreground tabular-nums">{stats.total_books}</strong>
+                                </span>
+                                <span>
+                                    Copies available: <strong className="text-foreground tabular-nums">{stats.available_copies}</strong>
+                                </span>
+                                <span>
+                                    Borrowed: <strong className="text-foreground tabular-nums">{stats.borrowed_books}</strong>
+                                </span>
+                                <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
+                                    <FileText className="size-3.5" />
+                                    Published eBooks: <strong className="tabular-nums">{stats.published_ebooks ?? 0}</strong>
+                                </span>
+                                {(stats.draft_ebooks ?? 0) > 0 && (
+                                    <span className="text-amber-700 dark:text-amber-400">
+                                        Draft eBooks: <strong className="tabular-nums">{stats.draft_ebooks}</strong>
+                                    </span>
+                                )}
                             </div>
                         </div>
-                        <Link href={createBook.url()} className={buttonVariants({ className: "gap-2" })}>
-                            <Plus className="h-4 w-4" />
-                            Add Book
-                        </Link>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <Link href={publicLibraryIndex.url()} className={buttonVariants({ variant: "outline", className: "gap-2" })}>
+                                <ExternalLink className="h-4 w-4" />
+                                Public Library
+                            </Link>
+                            <Link href={createBook.url()} className={buttonVariants({ className: "gap-2" })}>
+                                <Plus className="h-4 w-4" />
+                                Add Book
+                            </Link>
+                        </div>
                     </CardHeader>
                 </Card>
 
                 <Card>
-                    <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                         <div>
                             <CardTitle>Catalog Overview</CardTitle>
-                            <CardDescription>Search by title, author, ISBN, call number, or accession number.</CardDescription>
+                            <CardDescription>Search by title, author, ISBN, call number, or filter by hosted PDF edition.</CardDescription>
                         </div>
-                        <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-                            <div className="relative w-full sm:w-64">
+                        <div className="flex w-full flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center lg:w-auto lg:justify-end">
+                            <div className="relative w-full sm:w-56">
                                 <Search className="text-muted-foreground absolute top-2.5 left-2.5 h-4 w-4" />
                                 <Input
                                     placeholder="Search catalog..."
@@ -159,8 +201,20 @@ export default function LibraryBooksIndex({ user, books, stats, filters, options
                                     className="pl-9"
                                 />
                             </div>
+                            <Select value={filters.digital ?? "all"} onValueChange={handleDigitalChange}>
+                                <SelectTrigger className="w-full sm:w-44" aria-label="Filter eBook format">
+                                    <SelectValue placeholder="eBook format" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {digitalOptions.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                            {option.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                             <Select value={filters.status ?? "all"} onValueChange={handleStatusChange}>
-                                <SelectTrigger className="w-full sm:w-44">
+                                <SelectTrigger className="w-full sm:w-36" aria-label="Filter circulation status">
                                     <SelectValue placeholder="Filter status" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -172,7 +226,7 @@ export default function LibraryBooksIndex({ user, books, stats, filters, options
                                 </SelectContent>
                             </Select>
                             <Select value={filters.sort ?? "created_at"} onValueChange={handleSortFieldChange}>
-                                <SelectTrigger className="w-full sm:w-44">
+                                <SelectTrigger className="w-full sm:w-40" aria-label="Sort field">
                                     <SelectValue placeholder="Sort by" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -184,7 +238,7 @@ export default function LibraryBooksIndex({ user, books, stats, filters, options
                                 </SelectContent>
                             </Select>
                             <Select value={filters.direction ?? "desc"} onValueChange={handleSortDirectionChange}>
-                                <SelectTrigger className="w-full sm:w-44">
+                                <SelectTrigger className="w-full sm:w-40" aria-label="Sort direction">
                                     <SelectValue placeholder="Order" />
                                 </SelectTrigger>
                                 <SelectContent>

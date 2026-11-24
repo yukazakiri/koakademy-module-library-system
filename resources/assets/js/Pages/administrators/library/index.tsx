@@ -18,9 +18,9 @@ import {
     AlertTriangle,
     ArrowUpRight,
     BookOpen,
-    BookText,
     ClipboardList,
     ExternalLink,
+    FileText,
     FolderOpen,
     GraduationCap,
     Plus,
@@ -32,6 +32,9 @@ import {
 interface LibraryStats {
     total_books: number;
     available_copies: number;
+    published_ebooks?: number;
+    draft_ebooks?: number;
+    downloadable_ebooks?: number;
     authors: number;
     categories: number;
     borrow_records: number;
@@ -47,6 +50,9 @@ interface RecentBook {
     category?: string | null;
     status: string;
     available_copies: number;
+    has_published_ebook?: boolean;
+    digital_status?: string | null;
+    downloads_allowed?: boolean;
     updated_at?: string | null;
 }
 
@@ -111,6 +117,10 @@ const formatDate = (value?: string | null) => {
 };
 
 export default function LibraryIndex({ user, stats, recent }: Props) {
+    const publishedEbooks = stats.published_ebooks ?? 0;
+    const draftEbooks = stats.draft_ebooks ?? 0;
+    const downloadableEbooks = stats.downloadable_ebooks ?? 0;
+
     return (
         <AdminLayout user={user} title="Library Operations Center">
             <Head title="Administrators • Library Operations Center" />
@@ -135,8 +145,8 @@ export default function LibraryIndex({ user, stats, recent }: Props) {
                                         Library Control Center
                                     </h1>
                                     <p className="text-muted-foreground mt-2 text-sm leading-relaxed md:text-base">
-                                        Monitor circulation activity, manage collection acquisitions, oversee student research archiving, and maintain
-                                        institutional metadata.
+                                        Monitor circulation activity, host rights-cleared PDF eBooks for open online reading, oversee student
+                                        research archiving, and maintain institutional metadata.
                                     </p>
                                 </div>
                             </div>
@@ -187,7 +197,7 @@ export default function LibraryIndex({ user, stats, recent }: Props) {
                                     <span className="font-medium text-emerald-600 dark:text-emerald-400">
                                         {numberFormatter.format(stats.available_copies)}
                                     </span>{" "}
-                                    copies ready for circulation
+                                    print copies available
                                 </p>
                             </div>
                             <IconTile variant="soft" size="lg" className="text-emerald-600 dark:text-emerald-400">
@@ -199,16 +209,26 @@ export default function LibraryIndex({ user, stats, recent }: Props) {
                     <Frame variant="default" spacing="xs" className="border-border/80 bg-card/60 shadow-xs">
                         <FramePanel className="flex items-center justify-between gap-4 p-5">
                             <div className="space-y-1">
-                                <p className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">Authors & Taxonomy</p>
+                                <div className="flex items-center gap-1.5">
+                                    <p className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">Hosted eBooks</p>
+                                    {draftEbooks > 0 && (
+                                        <Badge variant="warning-light" size="xs" radius="full">
+                                            {draftEbooks} Draft
+                                        </Badge>
+                                    )}
+                                </div>
                                 <p className="text-foreground font-serif text-3xl font-bold tabular-nums">
-                                    {numberFormatter.format(stats.authors + stats.categories)}
+                                    {numberFormatter.format(publishedEbooks)}
                                 </p>
                                 <p className="text-muted-foreground text-xs">
-                                    {stats.authors} authors • {stats.categories} categories
+                                    <span className="font-medium text-sky-600 dark:text-sky-400">
+                                        {numberFormatter.format(downloadableEbooks)}
+                                    </span>{" "}
+                                    account-downloadable PDFs
                                 </p>
                             </div>
                             <IconTile variant="soft" size="lg" className="text-sky-600 dark:text-sky-400">
-                                <BookText />
+                                <FileText />
                             </IconTile>
                         </FramePanel>
                     </Frame>
@@ -275,7 +295,7 @@ export default function LibraryIndex({ user, stats, recent }: Props) {
                                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                     <div>
                                         <h2 className="text-foreground font-serif text-lg font-semibold">Recent Catalog Updates</h2>
-                                        <p className="text-muted-foreground text-xs">Latest book acquisitions and inventory modifications.</p>
+                                        <p className="text-muted-foreground text-xs">Latest book acquisitions, hosted eBooks, and inventory updates.</p>
                                     </div>
                                     <Link
                                         href={adminBooksIndex.url()}
@@ -311,7 +331,19 @@ export default function LibraryIndex({ user, stats, recent }: Props) {
                                                     <TableRow key={book.id} className="hover:bg-muted/30 transition-colors">
                                                         <TableCell>
                                                             <div className="space-y-0.5">
-                                                                <p className="text-foreground text-xs leading-snug font-medium">{book.title}</p>
+                                                                <div className="flex flex-wrap items-center gap-1.5">
+                                                                    <p className="text-foreground text-xs leading-snug font-medium">{book.title}</p>
+                                                                    {book.has_published_ebook && (
+                                                                        <Badge variant="info-light" radius="full" size="xs">
+                                                                            eBook
+                                                                        </Badge>
+                                                                    )}
+                                                                    {!book.has_published_ebook && book.digital_status === "draft" && (
+                                                                        <Badge variant="warning-light" radius="full" size="xs">
+                                                                            Draft PDF
+                                                                        </Badge>
+                                                                    )}
+                                                                </div>
                                                                 <p className="text-muted-foreground text-[11px]">
                                                                     {book.category ?? "General Collection"}
                                                                 </p>
@@ -355,6 +387,16 @@ export default function LibraryIndex({ user, stats, recent }: Props) {
                                     badge: (
                                         <Badge variant="outline" size="xs" radius="full">
                                             {numberFormatter.format(stats.total_books)}
+                                        </Badge>
+                                    ),
+                                },
+                                {
+                                    icon: <FileText className="text-sky-600 dark:text-sky-400" />,
+                                    label: "Hosted eBooks (PDF)",
+                                    href: adminBooksIndex.url({ query: { digital: "published" } }),
+                                    badge: (
+                                        <Badge variant="info-light" size="xs" radius="full">
+                                            {numberFormatter.format(publishedEbooks)} Live
                                         </Badge>
                                     ),
                                 },

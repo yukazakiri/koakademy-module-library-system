@@ -5,13 +5,23 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
+    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { read as readDigitalBook } from "@/routes/library/books";
 import { Link } from "@inertiajs/react";
 import { ColumnDef } from "@tanstack/react-table";
-import { ArrowUpDown, MoreHorizontal, Pencil, Trash2, Zap } from "lucide-react";
+import { ArrowUpDown, BookOpen, Copy, Download, FileText, MoreHorizontal, Pencil, Trash2, Zap } from "lucide-react";
+import { toast } from "sonner";
 
 declare let route: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+export type BookDigitalEditionSummary = {
+    status: "draft" | "published";
+    is_accessible: boolean;
+    downloads_allowed: boolean;
+    size_bytes: number;
+};
 
 export type Book = {
     id: number;
@@ -27,6 +37,7 @@ export type Book = {
     publication_year: number | null;
     location: string | null;
     cover_image_url: string | null;
+    digital_edition?: BookDigitalEditionSummary | null;
     updated_at: string | null;
     created_at: string | null;
 };
@@ -36,6 +47,17 @@ const statusStyles: Record<string, string> = {
     borrowed: "bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/15",
     maintenance: "bg-rose-500/10 text-rose-700 dark:text-rose-300 hover:bg-rose-500/15",
 };
+
+function formatFileSize(bytes: number): string {
+    if (bytes >= 1024 * 1024) {
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+    if (bytes >= 1024) {
+        return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+    }
+
+    return `${bytes} B`;
+}
 
 export const columns: ColumnDef<Book>[] = [
     {
@@ -83,11 +105,13 @@ export const columns: ColumnDef<Book>[] = [
                             Cover
                         </div>
                     )}
-                    <div className="space-y-1">
-                        <p className="text-foreground font-medium">{book.title}</p>
-                        <p className="text-muted-foreground text-xs">{book.isbn ? `ISBN ${book.isbn}` : "No ISBN"}</p>
+                    <div className="min-w-0 max-w-[230px] space-y-0.5">
+                        <p className="text-foreground truncate font-medium" title={book.title}>
+                            {book.title}
+                        </p>
+                        <p className="text-muted-foreground truncate text-xs">{book.isbn ? `ISBN ${book.isbn}` : "No ISBN"}</p>
                         {(book.call_number || book.accession_number) && (
-                            <p className="text-muted-foreground text-xs">
+                            <p className="text-muted-foreground truncate text-xs">
                                 {[book.call_number ? `Call ${book.call_number}` : null, book.accession_number ? `Acc. ${book.accession_number}` : null]
                                     .filter(Boolean)
                                     .join(" · ")}
@@ -110,7 +134,7 @@ export const columns: ColumnDef<Book>[] = [
             const category = row.original.category;
             return (
                 <div className="flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: category?.color ?? "#64748b" }} />
+                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: category?.color ?? "#64748b" }} />
                     <span className="text-muted-foreground text-sm">{category?.name ?? "Uncategorized"}</span>
                 </div>
             );
@@ -124,16 +148,64 @@ export const columns: ColumnDef<Book>[] = [
                 <ArrowUpDown className="ml-2 h-4 w-4" />
             </Button>
         ),
-        cell: ({ row }) => <span className="text-muted-foreground text-sm">{row.original.publication_year ?? "—"}</span>,
+        cell: ({ row }) => <span className="text-muted-foreground text-sm tabular-nums">{row.original.publication_year ?? "—"}</span>,
     },
     {
         accessorKey: "copies",
         header: "Copies",
         cell: ({ row }) => (
-            <span className="text-muted-foreground text-sm">
+            <span className="text-muted-foreground text-sm tabular-nums">
                 {row.original.available_copies}/{row.original.total_copies}
             </span>
         ),
+    },
+    {
+        id: "ebook",
+        header: "eBook",
+        cell: ({ row }) => {
+            const edition = row.original.digital_edition;
+
+            if (!edition) {
+                return <span className="text-muted-foreground/70 text-xs">Print only</span>;
+            }
+
+            if (edition.is_accessible) {
+                return (
+                    <div className="flex flex-col items-start gap-0.5">
+                        <Badge
+                            className={
+                                edition.downloads_allowed
+                                    ? "gap-1 bg-emerald-500/12 text-emerald-700 hover:bg-emerald-500/18 dark:text-emerald-300"
+                                    : "gap-1 bg-sky-500/12 text-sky-700 hover:bg-sky-500/18 dark:text-sky-300"
+                            }
+                        >
+                            {edition.downloads_allowed ? <Download className="size-3" /> : <BookOpen className="size-3" />}
+                            {edition.downloads_allowed ? "Downloadable" : "Read only"}
+                        </Badge>
+                        <span className="text-muted-foreground text-[11px] tabular-nums">{formatFileSize(edition.size_bytes)}</span>
+                    </div>
+                );
+            }
+
+            if (edition.status === "draft") {
+                return (
+                    <div className="flex flex-col items-start gap-0.5">
+                        <Badge className="gap-1 bg-amber-500/12 text-amber-700 hover:bg-amber-500/18 dark:text-amber-300">
+                            <FileText className="size-3" />
+                            Draft PDF
+                        </Badge>
+                        <span className="text-muted-foreground text-[11px] tabular-nums">{formatFileSize(edition.size_bytes)}</span>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="flex flex-col items-start gap-0.5">
+                    <Badge className="bg-rose-500/12 text-rose-700 hover:bg-rose-500/18 dark:text-rose-300">Expired</Badge>
+                    <span className="text-muted-foreground text-[11px] tabular-nums">{formatFileSize(edition.size_bytes)}</span>
+                </div>
+            );
+        },
     },
     {
         accessorKey: "status",
@@ -149,6 +221,20 @@ export const columns: ColumnDef<Book>[] = [
         enableHiding: false,
         cell: ({ row }) => {
             const book = row.original;
+            const isPublished = Boolean(book.digital_edition?.is_accessible);
+
+            const copyReaderLink = async () => {
+                const relativeUrl = readDigitalBook.url(book.id);
+                const absoluteUrl = typeof window !== "undefined" ? new URL(relativeUrl, window.location.origin).toString() : relativeUrl;
+
+                try {
+                    await navigator.clipboard.writeText(absoluteUrl);
+                    toast.success("Public reader link copied.");
+                } catch {
+                    toast.error("Could not copy link automatically.", { description: absoluteUrl });
+                }
+            };
+
             return (
                 <div className="flex justify-end">
                     <DropdownMenu>
@@ -162,9 +248,33 @@ export const columns: ColumnDef<Book>[] = [
                             <DropdownMenuItem asChild>
                                 <Link href={route("administrators.library.books.edit", book.id)} className="flex items-center gap-2">
                                     <Pencil className="h-4 w-4" />
-                                    Edit
+                                    Edit Book
                                 </Link>
                             </DropdownMenuItem>
+                            <DropdownMenuItem asChild>
+                                <Link
+                                    href={`${route("administrators.library.books.edit", book.id)}#digital-edition`}
+                                    className="flex items-center gap-2"
+                                >
+                                    <FileText className="h-4 w-4" />
+                                    {book.digital_edition ? "Manage eBook PDF" : "Upload eBook PDF"}
+                                </Link>
+                            </DropdownMenuItem>
+                            {isPublished && (
+                                <>
+                                    <DropdownMenuItem asChild>
+                                        <Link href={readDigitalBook.url(book.id)} className="flex items-center gap-2">
+                                            <BookOpen className="h-4 w-4" />
+                                            Open Public Reader
+                                        </Link>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => void copyReaderLink()} className="flex items-center gap-2">
+                                        <Copy className="h-4 w-4" />
+                                        Copy Reader Link
+                                    </DropdownMenuItem>
+                                </>
+                            )}
+                            <DropdownMenuSeparator />
                             <DropdownMenuItem
                                 onClick={() => window.dispatchEvent(new CustomEvent("books:soft-delete", { detail: book }))}
                                 className="text-destructive focus:text-destructive flex items-center gap-2"

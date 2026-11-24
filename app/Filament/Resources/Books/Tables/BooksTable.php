@@ -25,6 +25,7 @@ final class BooksTable
     public static function configure(Table $table): Table
     {
         return $table
+            ->modifyQueryUsing(fn (Builder $query): Builder => $query->with('digitalEdition'))
             ->columns([
                 ImageColumn::make('cover_image')
                     ->label('Cover')
@@ -94,6 +95,37 @@ final class BooksTable
                         default => 'gray',
                     }),
 
+                TextColumn::make('digital_edition_label')
+                    ->label('eBook')
+                    ->badge()
+                    ->state(function (Book $record): string {
+                        $edition = $record->digitalEdition;
+
+                        if ($edition === null) {
+                            return 'Print only';
+                        }
+
+                        if ($edition->isAccessible()) {
+                            return $edition->downloads_allowed ? 'Published · Downloadable' : 'Published · Read only';
+                        }
+
+                        return $edition->status->value === 'draft' ? 'Draft PDF' : 'Rights expired';
+                    })
+                    ->color(function (Book $record): string {
+                        $edition = $record->digitalEdition;
+
+                        if ($edition === null) {
+                            return 'gray';
+                        }
+
+                        if ($edition->isAccessible()) {
+                            return $edition->downloads_allowed ? 'success' : 'info';
+                        }
+
+                        return $edition->status->value === 'draft' ? 'warning' : 'danger';
+                    })
+                    ->toggleable(),
+
                 BadgeColumn::make('total_copies')
                     ->label('Total')
                     ->color('primary'),
@@ -133,6 +165,11 @@ final class BooksTable
                         'borrowed' => 'Borrowed',
                         'maintenance' => 'Maintenance',
                     ]),
+
+                Filter::make('published_ebook')
+                    ->label('Published eBooks')
+                    ->query(fn (Builder $query): Builder => $query->whereHas('digitalEdition', fn (Builder $digitalQuery): Builder => $digitalQuery->accessible()))
+                    ->toggle(),
 
                 Filter::make('available_only')
                     ->label('Available Only')

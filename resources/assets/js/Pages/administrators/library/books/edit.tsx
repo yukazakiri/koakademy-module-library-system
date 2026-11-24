@@ -6,7 +6,7 @@ import {
 import { store as storeBook, update as updateBook } from "@/actions/Modules/LibrarySystem/Http/Controllers/AdministratorLibraryBookController";
 import AdminLayout from "@/components/administrators/admin-layout";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,7 @@ import {
     BookOpen,
     BookPlus,
     CheckCircle2,
+    Copy,
     Download,
     FileCheck2,
     FileText,
@@ -641,10 +642,24 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
         });
     };
 
+    const copyReaderLink = async () => {
+        const relativeUrl = readDigitalBook.url(book.id);
+        const absoluteUrl = typeof window !== "undefined" ? new URL(relativeUrl, window.location.origin).toString() : relativeUrl;
+
+        try {
+            await navigator.clipboard.writeText(absoluteUrl);
+            toast.success("Public reader link copied to clipboard.");
+        } catch {
+            toast.error("Could not copy link automatically.", {
+                description: absoluteUrl,
+            });
+        }
+    };
+
     const publishing = form.data.status === "published" && !form.data.pdf;
 
     return (
-        <form onSubmit={handleSubmit} className="mt-6">
+        <form id="digital-edition" onSubmit={handleSubmit} className="mt-6 scroll-mt-20">
             <Card className="overflow-hidden border-amber-700/20">
                 <CardHeader className="border-b bg-amber-50/70 dark:bg-amber-950/10">
                     <div className="flex flex-wrap items-start justify-between gap-4">
@@ -660,22 +675,29 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
                                     </Badge>
                                 </div>
                                 <CardDescription className="mt-1">
-                                    Upload a rights-cleared PDF for authenticated online reading. New files default to draft and downloads stay off
-                                    unless explicitly allowed.
+                                    Upload a rights-cleared PDF for open browser reading without an account. New files default to draft, and PDF
+                                    downloads require a signed-in account and stay off unless explicitly allowed.
                                 </CardDescription>
                             </div>
                         </div>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                             {edition?.status === "published" && (
-                                <Button type="button" variant="outline" asChild>
-                                    <Link href={readDigitalBook.url(book.id)}>
+                                <>
+                                    <Button type="button" variant="outline" className="gap-2" onClick={() => void copyReaderLink()}>
+                                        <Copy className="size-4" />
+                                        Copy reader link
+                                    </Button>
+                                    <Link
+                                        href={readDigitalBook.url(book.id)}
+                                        className={buttonVariants({ variant: "outline", className: "gap-2" })}
+                                    >
                                         <BookOpen className="size-4" />
                                         Preview reader
                                     </Link>
-                                </Button>
+                                </>
                             )}
                             {edition && (
-                                <Button type="button" variant="destructive" onClick={removeEdition}>
+                                <Button type="button" variant="destructive" className="gap-2" onClick={removeEdition}>
                                     <Trash2 className="size-4" />
                                     Remove edition
                                 </Button>
@@ -685,8 +707,8 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
                 </CardHeader>
 
                 <CardContent className="grid gap-7 p-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.85fr)] lg:p-6">
-                    <div className="space-y-6">
-                        <div className="space-y-3">
+                    <div className="min-w-0 space-y-6">
+                        <div className="relative space-y-3">
                             <Label htmlFor="digital_pdf">{edition ? "Replace PDF" : "PDF file"}</Label>
                             <label
                                 htmlFor="digital_pdf"
@@ -737,7 +759,7 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
                                     </SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="draft">Draft — staff only</SelectItem>
-                                        <SelectItem value="published">Published — authenticated users</SelectItem>
+                                        <SelectItem value="published">Published — public browser reading</SelectItem>
                                     </SelectContent>
                                 </Select>
                                 {(form.data.pdf || !edition) && (
@@ -805,9 +827,9 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
                                     onCheckedChange={(checked) => form.setData("downloads_allowed", checked === true)}
                                 />
                                 <div>
-                                    <Label htmlFor="downloads_allowed">Allow PDF downloads</Label>
+                                    <Label htmlFor="downloads_allowed">Allow PDF downloads (account required)</Label>
                                     <p className="text-muted-foreground mt-1 text-xs leading-5">
-                                        Keep disabled unless the documented rights explicitly permit downloadable copies.
+                                        Keep disabled unless documented rights permit downloads. Only signed-in users can download when enabled.
                                     </p>
                                 </div>
                             </div>
@@ -825,7 +847,7 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
                         </div>
                     </div>
 
-                    <div className="space-y-5">
+                    <div className="min-w-0 space-y-5">
                         <div className="rounded-2xl border border-amber-700/20 bg-amber-50/70 p-5 dark:bg-amber-950/10">
                             <div className="flex items-center gap-2 text-amber-900 dark:text-amber-100">
                                 <ShieldCheck className="size-5" />
@@ -846,7 +868,7 @@ function DigitalEditionSection({ book, rightsBases }: { book: BookRecord; rights
                                         onCheckedChange={(checked) => form.setData("rights_confirmed", checked === true)}
                                     />
                                     <Label htmlFor="rights_confirmed" className="text-sm leading-6">
-                                        I reviewed the documentation and confirm KoAkademy has the right to provide this PDF to authenticated users
+                                        I reviewed the documentation and confirm KoAkademy has the right to publish this PDF for online reading
                                         under the selected terms.
                                     </Label>
                                 </div>

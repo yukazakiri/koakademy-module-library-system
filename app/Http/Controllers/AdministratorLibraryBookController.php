@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
+use Modules\LibrarySystem\Enums\DigitalEditionStatus;
 use Modules\LibrarySystem\Enums\DigitalRightsBasis;
 use Modules\LibrarySystem\Http\Requests\Administrators\BulkDeleteBookRequest;
 use Modules\LibrarySystem\Http\Requests\Administrators\BulkForceDeleteBookRequest;
@@ -22,6 +23,7 @@ use Modules\LibrarySystem\Http\Requests\Administrators\LibraryBookRequest;
 use Modules\LibrarySystem\Models\Author;
 use Modules\LibrarySystem\Models\Book;
 use Modules\LibrarySystem\Models\Category;
+use Modules\LibrarySystem\Models\DigitalEdition;
 use Throwable;
 
 final class AdministratorLibraryBookController extends Controller
@@ -30,6 +32,7 @@ final class AdministratorLibraryBookController extends Controller
     {
         $search = $request->input('search');
         $status = $request->input('status');
+        $digital = $request->input('digital');
         $sort = $request->string('sort', 'created_at')->toString();
         $direction = $request->string('direction', 'desc')->toString();
         $perPage = $request->integer('per_page', 20);
@@ -38,9 +41,12 @@ final class AdministratorLibraryBookController extends Controller
         $sort = in_array($sort, $allowedSorts, true) ? $sort : 'created_at';
         $direction = in_array($direction, ['asc', 'desc'], true) ? $direction : 'desc';
         $perPage = in_array($perPage, [10, 20, 50, 100], true) ? $perPage : 20;
+        $digital = is_string($digital) && in_array($digital, ['published', 'downloadable', 'draft', 'none'], true)
+            ? $digital
+            : null;
 
         $booksQuery = Book::query()
-            ->with(['author', 'category'])
+            ->with(['author', 'category', 'digitalEdition'])
             ->when(is_string($search) && mb_trim($search) !== '', function ($query) use ($search): void {
                 $term = mb_strtolower(mb_trim($search));
                 $pattern = "%{$term}%";
@@ -53,7 +59,11 @@ final class AdministratorLibraryBookController extends Controller
                         ->orWhereHas('category', fn ($categoryQuery) => $categoryQuery->whereRaw('LOWER(name) LIKE ?', [$pattern]));
                 });
             })
-            ->when(is_string($status) && $status !== '' && $status !== 'all', fn ($query) => $query->where('status', $status));
+            ->when(is_string($status) && $status !== '' && $status !== 'all', fn ($query) => $query->where('status', $status))
+            ->when($digital === 'published', fn ($query) => $query->whereHas('digitalEdition', fn ($digitalQuery) => $digitalQuery->accessible()))
+            ->when($digital === 'downloadable', fn ($query) => $query->whereHas('digitalEdition', fn ($digitalQuery) => $digitalQuery->accessible()->where('downloads_allowed', true)))
+            ->when($digital === 'draft', fn ($query) => $query->whereHas('digitalEdition', fn ($digitalQuery) => $digitalQuery->where('status', DigitalEditionStatus::Draft->value)))
+            ->when($digital === 'none', fn ($query) => $query->whereDoesntHave('digitalEdition'));
 
         $booksQuery->orderBy($sort, $direction)
             ->orderBy('id', $direction);
@@ -82,6 +92,12 @@ final class AdministratorLibraryBookController extends Controller
                 'publication_year' => $book->publication_year,
                 'location' => $book->location,
                 'cover_image_url' => $this->resolveCoverImageUrl($book),
+                'digital_edition' => $book->digitalEdition ? [
+                    'status' => $book->digitalEdition->status->value,
+                    'is_accessible' => $book->digitalEdition->isAccessible(),
+                    'downloads_allowed' => $book->digitalEdition->downloads_allowed,
+                    'size_bytes' => $book->digitalEdition->size_bytes,
+                ] : null,
                 'updated_at' => format_timestamp($book->updated_at),
                 'created_at' => format_timestamp($book->created_at),
             ]);
@@ -90,6 +106,8 @@ final class AdministratorLibraryBookController extends Controller
             'total_books' => Book::count(),
             'available_copies' => (int) Book::sum('available_copies'),
             'borrowed_books' => Book::query()->where('status', 'borrowed')->count(),
+            'published_ebooks' => DigitalEdition::query()->accessible()->count(),
+            'draft_ebooks' => DigitalEdition::query()->where('status', DigitalEditionStatus::Draft->value)->count(),
         ];
 
         return Inertia::render('administrators/library/books/index', [
@@ -99,6 +117,7 @@ final class AdministratorLibraryBookController extends Controller
             'filters' => [
                 'search' => is_string($search) ? $search : null,
                 'status' => is_string($status) ? $status : null,
+                'digital' => $digital,
                 'sort' => $sort,
                 'direction' => $direction,
                 'per_page' => $perPage,
@@ -109,6 +128,13 @@ final class AdministratorLibraryBookController extends Controller
                     ['value' => 'available', 'label' => 'Available'],
                     ['value' => 'borrowed', 'label' => 'Borrowed'],
                     ['value' => 'maintenance', 'label' => 'Maintenance'],
+                ],
+                'digital' => [
+                    ['value' => 'all', 'label' => 'All formats'],
+                    ['value' => 'published', 'label' => 'Published eBooks'],
+                    ['value' => 'downloadable', 'label' => 'Downloadable eBooks'],
+                    ['value' => 'draft', 'label' => 'Draft eBooks'],
+                    ['value' => 'none', 'label' => 'Print only'],
                 ],
                 'per_page' => [
                     ['value' => 10, 'label' => '10'],

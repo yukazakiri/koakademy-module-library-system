@@ -7,10 +7,12 @@ namespace Modules\LibrarySystem\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Inertia\Inertia;
 use Inertia\Response;
+use Modules\LibrarySystem\Enums\DigitalEditionStatus;
 use Modules\LibrarySystem\Models\Author;
 use Modules\LibrarySystem\Models\Book;
 use Modules\LibrarySystem\Models\BorrowRecord;
 use Modules\LibrarySystem\Models\Category;
+use Modules\LibrarySystem\Models\DigitalEdition;
 use Modules\LibrarySystem\Models\ResearchPaper;
 
 final class AdministratorLibraryController extends Controller
@@ -20,6 +22,9 @@ final class AdministratorLibraryController extends Controller
         $stats = [
             'total_books' => Book::count(),
             'available_copies' => (int) Book::sum('available_copies'),
+            'published_ebooks' => DigitalEdition::query()->accessible()->count(),
+            'draft_ebooks' => DigitalEdition::query()->where('status', DigitalEditionStatus::Draft->value)->count(),
+            'downloadable_ebooks' => DigitalEdition::query()->accessible()->where('downloads_allowed', true)->count(),
             'authors' => Author::count(),
             'categories' => Category::count(),
             'borrow_records' => BorrowRecord::count(),
@@ -32,7 +37,7 @@ final class AdministratorLibraryController extends Controller
         ];
 
         $recentBooks = Book::query()
-            ->with(['author', 'category'])
+            ->with(['author', 'category', 'digitalEdition'])
             ->latest()
             ->take(5)
             ->get()
@@ -43,6 +48,9 @@ final class AdministratorLibraryController extends Controller
                 'category' => $book->category?->name,
                 'status' => $book->status,
                 'available_copies' => $book->available_copies,
+                'has_published_ebook' => $book->digitalEdition?->isAccessible() ?? false,
+                'digital_status' => $book->digitalEdition?->status->value,
+                'downloads_allowed' => $book->digitalEdition?->downloads_allowed ?? false,
                 'updated_at' => format_timestamp($book->updated_at),
             ]);
 
